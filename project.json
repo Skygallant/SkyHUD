@@ -1,0 +1,59 @@
+{
+  "cli": {
+    "fmtVersion": 5
+  },
+  "name": "SkyHUD",
+  "description": "An immersive fighter HUD for first person flying.",
+  "sourcePath": "src",
+  "outputPath": "out",
+  "libs": [
+    {
+      "id": "AR_Library",
+      "type": "raw",
+      "path": "libs/@EasternGamer/AR-Library",
+      "remote": {
+        "git": "https://github.com/EasternGamer/AR-Library.git"
+      }
+    }
+  ],
+  "builds": [
+    {
+      "name": "main",
+      "type": "control",
+      "slots": [
+        {
+          "name": "altimeter",
+          "type": "telemeter"
+        },
+        {
+          "name": "core",
+          "type": "core",
+          "events": []
+        },
+        {
+          "name": "disk",
+          "type": "databank"
+        },
+        {
+          "name": "warp",
+          "type": "warpDrive"
+        }
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "name": "custom",
+      "handleErrors": true,
+      "minify": true,
+      "stripComments": true,
+      "variables": {}
+    }
+  ],
+  "internalPaths": [
+    "autoconf/",
+    "cpml/",
+    "pl/",
+    "utils/event"
+  ]
+}
