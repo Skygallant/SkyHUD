@@ -35,9 +35,9 @@ An immersive fighter HUD for first person flying.
 ## Setup
 * Bingo fuel and sustenation speed need to be set in the lua paramters before takeoff.
 * Your ship must contain a:
- * Gyroscope
- * Databank
- * Telemeter
+  * Gyroscope
+  * Databank
+  * Telemeter
 
 Super thanks to
 * [DU-LuaC](https://github.com/wolfe-labs/DU-LuaC)'s interactive CLI
