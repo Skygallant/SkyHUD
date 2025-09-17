@@ -726,54 +726,49 @@ local function updateHud()
             __fuelAccumSpaceUsed = __fuelAccumSpaceUsed + usedSpace
             __fuelAccumDt = __fuelAccumDt + dt
 
-            -- Trim accumulation window to at most FUEL_SMOOTH_WINDOW_S for realtime smoothing
-            if __fuelAccumDt > FUEL_SMOOTH_WINDOW_S then
-                local r = FUEL_SMOOTH_WINDOW_S / __fuelAccumDt
-                __fuelAccumAtmoUsed = __fuelAccumAtmoUsed * r
-                __fuelAccumSpaceUsed = __fuelAccumSpaceUsed * r
-                __fuelAccumDt = FUEL_SMOOTH_WINDOW_S
-            end
+            -- Update outputs only when a full smoothing window has elapsed
+            if __fuelAccumDt >= FUEL_SMOOTH_WINDOW_S then
+                local atmoKgPerMin = (__fuelAccumDt > 0) and ((__fuelAccumAtmoUsed / __fuelAccumDt) * 60) or 0
+                local spaceKgPerMin = (__fuelAccumDt > 0) and ((__fuelAccumSpaceUsed / __fuelAccumDt) * 60) or 0
 
-            -- Recompute every frame for realtime display
-            local atmoKgPerMin = (__fuelAccumDt > 0) and ((__fuelAccumAtmoUsed / __fuelAccumDt) * 60) or 0
-            local spaceKgPerMin = (__fuelAccumDt > 0) and ((__fuelAccumSpaceUsed / __fuelAccumDt) * 60) or 0
+                if atmoKgPerMin > 0 then __lastAtmoEcoKgMin = atmoKgPerMin end
+                if spaceKgPerMin > 0 then __lastSpaceEcoKgMin = spaceKgPerMin end
 
-            if atmoKgPerMin > 0 then
-                __lastAtmoEcoKgMin = atmoKgPerMin
-            end
-            if spaceKgPerMin > 0 then
-                __lastSpaceEcoKgMin = spaceKgPerMin
-            end
-
-            -- Only show zero if no fuel consumed for >= FUEL_ZERO_DELAY_S
-            if __lastAtmoUseT and (now - __lastAtmoUseT) >= FUEL_ZERO_DELAY_S then
-                atmo_eco = 0
-                atmo_s_remain = 0
-            else
-                local effAtmoKgPerMin = (atmoKgPerMin > 0) and atmoKgPerMin or __lastAtmoEcoKgMin
-                if effAtmoKgPerMin > 0 then
-                    atmo_eco = math.floor(effAtmoKgPerMin + 0.5)
-                    local atmoKgPerSec = effAtmoKgPerMin / 60
-                    atmo_s_remain = math.floor((atmoKg or 0) / atmoKgPerSec + 0.5)
-                else
+                -- Only show zero if no fuel consumed for >= FUEL_ZERO_DELAY_S
+                if __lastAtmoUseT and (now - __lastAtmoUseT) >= FUEL_ZERO_DELAY_S then
                     atmo_eco = 0
                     atmo_s_remain = 0
-                end
-            end
-
-            if __lastSpaceUseT and (now - __lastSpaceUseT) >= FUEL_ZERO_DELAY_S then
-                space_eco = 0
-                space_s_remain = 0
-            else
-                local effSpaceKgPerMin = (spaceKgPerMin > 0) and spaceKgPerMin or __lastSpaceEcoKgMin
-                if effSpaceKgPerMin > 0 then
-                    space_eco = math.floor(effSpaceKgPerMin + 0.5)
-                    local spaceKgPerSec = effSpaceKgPerMin / 60
-                    space_s_remain = math.floor((spaceKg or 0) / spaceKgPerSec + 0.5)
                 else
+                    local effAtmoKgPerMin = (atmoKgPerMin > 0) and atmoKgPerMin or __lastAtmoEcoKgMin
+                    if effAtmoKgPerMin > 0 then
+                        atmo_eco = math.floor(effAtmoKgPerMin + 0.5)
+                        local atmoKgPerSec = effAtmoKgPerMin / 60
+                        atmo_s_remain = math.floor((atmoKg or 0) / atmoKgPerSec + 0.5)
+                    else
+                        atmo_eco = 0
+                        atmo_s_remain = 0
+                    end
+                end
+
+                if __lastSpaceUseT and (now - __lastSpaceUseT) >= FUEL_ZERO_DELAY_S then
                     space_eco = 0
                     space_s_remain = 0
+                else
+                    local effSpaceKgPerMin = (spaceKgPerMin > 0) and spaceKgPerMin or __lastSpaceEcoKgMin
+                    if effSpaceKgPerMin > 0 then
+                        space_eco = math.floor(effSpaceKgPerMin + 0.5)
+                        local spaceKgPerSec = effSpaceKgPerMin / 60
+                        space_s_remain = math.floor((spaceKg or 0) / spaceKgPerSec + 0.5)
+                    else
+                        space_eco = 0
+                        space_s_remain = 0
+                    end
                 end
+
+                -- Reset accumulation for the next window
+                __fuelAccumAtmoUsed = 0
+                __fuelAccumSpaceUsed = 0
+                __fuelAccumDt = 0
             end
 
             __prevAtmoKg = atmoKg
