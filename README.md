@@ -40,6 +40,7 @@ An immersive fighter HUD for first person flying.
   * Gyroscope
   * Databank
   * Telemeter
+  * (at least one) Landing Gear
 * (Optional):
   * Manual Switch - this must be linked manually and be named "switch" in the lua editor.
     * Will automatically toggle on when piloting and off when exiting the ship.
