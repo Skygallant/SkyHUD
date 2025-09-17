@@ -32,15 +32,20 @@ local __prevSpaceKg = nil
 local __fuelAccumDt = 0
 local __fuelAccumAtmoUsed = 0
 local __fuelAccumSpaceUsed = 0
+-- Realtime fuel display helpers
+local __lastAtmoUseT = nil
+local __lastSpaceUseT = nil
+local __lastAtmoEcoKgMin = 0
+local __lastSpaceEcoKgMin = 0
 local k = 0.5522847498307936
-local sustenationSpeed = 221 --export The sustentation speed (in km/h) of the construct as stated in build mode.
+local sustenationSpeed = 474 --export The sustentation speed (in km/h) of the construct as stated in build mode.
 local bingoFuel = 500 --export The mass of fuel (in kg) that would be deemed sufficient to return to base with.
 
 Nav = Navigator.new(system, core, unit)
 Nav.axisCommandManager:setupCustomTargetSpeedRanges(axisCommandId.longitudinal, {1000, 5000, 10000, 20000, 30000})
 
 system.clearWaypoint(false)
-if lights then lights.activate() end
+if switch then switch.activate() end
 unit.switchOnHeadlights()
 
 -- Widgets and panels intentionally disabled
@@ -207,6 +212,15 @@ CenterObjPath = PathBuilder()
     .moveTo(-7, 7)
     .lineTo( 7,-7)
 
+DestSpaceMarkerPath = PathBuilder()
+    .setFill('green', false)
+    .setFillOpacity(1, false)
+    .moveTo( 5, 5)
+    .lineTo( 5,-5)
+    .lineTo(-5,-5)
+    .lineTo(-5, 5)
+    .closePath()
+
 AzimIndicatorPath = PathBuilder()
     .setFill('green', false)
     .setFillOpacity(1, false)
@@ -264,10 +278,11 @@ TickerObjPath = PathBuilder()
 CaptureBoxPath = PathBuilder()
     .setStroke('green', false)
     .setStrokeWidth(5, false)
+    .setFillOpacity(0, false)
     .moveTo(-160, 80)
     .lineTo( 160, 80)
-    .lineTo( 160, -50)
-    .lineTo(-160, -50)
+    .lineTo( 160, -70)
+    .lineTo(-160, -70)
     .closePath()
 
 
@@ -292,13 +307,19 @@ StallOrb.setPositionIsRelative(true)
 StallOrb.setScale(1/600)
 StallOrb.build()
 
-CaptureBoxObj = pHud.createCustomDraw(0,0,0.00011)
+CaptureBoxObj = pHud.createCustomDraw(0,0,0.0011)
 CaptureBoxObj.usePathBuilder(CaptureBoxPath)
 CaptureBoxObj.setPositionIsRelative(true)
 CaptureBoxObj.setScale(1/600)
 CaptureBoxObj.build()
 
-DistIndicator = pHud.createText(0,0,0.0002)
+DestSpaceMarkerObj = pHud.createCustomDraw(0,0,0.000132)
+DestSpaceMarkerObj.usePathBuilder(DestSpaceMarkerPath)
+DestSpaceMarkerObj.setPositionIsRelative(true)
+DestSpaceMarkerObj.setScale(1/600)
+DestSpaceMarkerObj.build()
+
+DistIndicator = pHud.createText(0,0,0.000222)
 DistIndicator.setPositionIsRelative(true)
 DistIndicator.setFontColor('green')
 DistIndicator.setFontSize(12)
@@ -361,12 +382,6 @@ LadderLObj.setPositionIsRelative(true)
 LadderLObj.setScale(1/600)
 LadderLObj.build()
 
-ThrottleBar = pHud.createCustomDraw(0,0,0.00012)
-ThrottleBar.usePathBuilder(ThrottleBarPath)
-ThrottleBar.setPositionIsRelative(true)
-ThrottleBar.setScale(1/600)
-ThrottleBar.build()
-
 LadderRObj = pHud.createCustomDraw(0,0,0.001)
 LadderRObj.usePathBuilder(LadderRObjPath)
 LadderRObj.setPositionIsRelative(true)
@@ -379,11 +394,11 @@ TickerObj.setPositionIsRelative(true)
 TickerObj.setScale(1/600)
 TickerObj.build()
 
-hudMaster.addSubElement(StallOrb)
-hudMaster.addSubElement(DistIndicator)
-hudMaster.addSubElement(CenterObj)
-hudMaster.addSubElement(AzimIndicator)
-hudMaster.addSubElement(ThrottleBar)
+ThrottleBar = pHud.createCustomDraw(0,0,0.00012)
+ThrottleBar.usePathBuilder(ThrottleBarPath)
+ThrottleBar.setPositionIsRelative(true)
+ThrottleBar.setScale(1/600)
+ThrottleBar.build()
 
 AnnounceFuelAtmoPath = PathBuilder()
     .setFill('green', false)
@@ -414,7 +429,7 @@ FuelGaugeObj.setText('Atmo Fuel')
 FuelGaugeObj.setWeight(0.002)
 FuelGaugeObj.setScale(1/600)
 
-DestArrivalTeleObj = pMfdR.createText(0,0,0.0002)
+DestArrivalTeleObj = pMfdR.createText(0,0,0.00021)
 DestArrivalTeleObj.setPositionIsRelative(true)
 DestArrivalTeleObj.setFontColor('green')
 DestArrivalTeleObj.setFontSize(6)
@@ -460,14 +475,6 @@ AnnounceFuelSpaceText.setWeight(0.002)
 AnnounceFuelSpaceText.setScale(1/600)
 
 
-MfdRMaster.addSubElement(FuelGaugeObj)
-MfdRMaster.addSubElement(DestArrivalTeleObj)
-MfdRMaster.addSubElement(AnnounceFuelAtmoObj)
-MfdRMaster.addSubElement(AnnounceFuelSpaceObj)
-MfdRMaster.addSubElement(AnnounceFuelAtmoText)
-MfdRMaster.addSubElement(AnnounceFuelSpaceText)
-
-
 AnnounceLoAltiPath = PathBuilder()
     .setFill('green', false)
     .setFillOpacity(1, false)
@@ -497,7 +504,7 @@ TelemetryDestNameObj.setText('Dest Name')
 TelemetryDestNameObj.setWeight(0.002)
 TelemetryDestNameObj.setScale(1/600)
 
-TelemetryDestInfoObj = pMfdL.createText(0,0,0.0002)
+TelemetryDestInfoObj = pMfdL.createText(0,0,0.00022)
 TelemetryDestInfoObj.setPositionIsRelative(true)
 TelemetryDestInfoObj.setFontColor('green')
 TelemetryDestInfoObj.setFontSize(6)
@@ -554,13 +561,6 @@ AnnounceLoAltiText.setWeight(0.002)
 AnnounceLoAltiText.setScale(1/600)
 
 
-MfdLMaster.addSubElement(AnnounceLoSpeedObj)
-MfdLMaster.addSubElement(AnnounceLoAltiObj)
-MfdLMaster.addSubElement(TelemetryDestNameObj)
-MfdLMaster.addSubElement(TelemetryDestInfoObj)
-MfdLMaster.addSubElement(TelemetryBrakeDistObj)
-MfdLMaster.addSubElement(AnnounceLoSpeedText)
-MfdLMaster.addSubElement(AnnounceLoAltiText)
 
 local function applyPath(el, pb)
     local drawStr, data, flat = pb.getResult()
@@ -599,16 +599,105 @@ local function getFuelMassTotals()
     return atmoKg, spaceKg
 end
 
+local function latLonAltToWorld(center, radius, latDeg, lonDeg, altM)
+    local lat = math.rad(latDeg or 0)
+    local lon = math.rad(lonDeg or 0)
+    local rad = (radius or 0) + (altM or 0)
+    local x = rad * math.cos(lat) * math.cos(lon)
+    local y = rad * math.cos(lat) * math.sin(lon)
+    local z = rad * math.sin(lat)
+    return vec3((center[1] or 0) + x, (center[2] or 0) + y, (center[3] or 0) + z)
+end
+
+
+local function getBodyCenter(systemId, bodyId)
+    local sys = atlas[systemId]
+    if not sys then return nil end
+    local body = sys[bodyId]
+    if not body then return nil end
+    local c = body.center
+    local r = body.radius or 0
+    return c, r
+end
+
+
+local function v3sub(a, b)
+    return vec3((a.x or a[1] or 0) - (b.x or b[1] or 0), (a.y or a[2] or 0) - (b.y or b[2] or 0), (a.z or a[3] or 0) - (b.z or b[3] or 0))
+end
+
+
 local function updateHud()
     local prev_enviro = enviro 
     enviro = ((unit.getAtmosphereDensity() or 0) > 0)
     if prev_enviro ~= enviro then change_enviro = true end
-    if distKm == 0 then DistIndicator.setText('555') else DistIndicator.setText(string.format("%.0f",distKm)) end
-    AltIndicator.move(0, altScaled, nil, true)
+    if distKm == 0 then DistIndicator.setText('555')
+    elseif distKm > 200 then DistIndicator.setText(string.format("%.0f su",math.ceil(distKm / 200)))
+    else DistIndicator.setText(string.format("%.0f",distKm)) end
+    AzimIndicator.move(headingScaled, 0, nil, true)
     VeloIndicator.move(0, speedScaled, nil, true)
-    AzimIndicator.move(headingScaled*-1, 0, nil, true)
+    if __destPos and not enviro then
+        local eye    = vec3(construct.getWorldPosition())
+        local toDest = v3sub(__destPos, eye)
 
-    -- Update fuel eco (kg/min) and remaining time using mass deltas over a window (smoothing)
+        local forward = vec3(construct.getWorldForward())
+        local right   = vec3(construct.getWorldRight())
+        local up      = vec3(construct.getWorldUp())
+
+        -- Component of destination along forward (used as atan2 x)
+        local fx = toDest:dot(forward)
+        if fx <= 0 then
+            DestSpaceMarkerObj.hideDraw()   -- destination is behind the camera
+        else
+            -- Compute the marker capture window from the actual HUD box geometry.
+            -- CaptureBoxPath spans x:-160..160 and y:-70..80, scaled by 1/600 on pHud.
+            local scale = 1/600
+            local halfWidthM      = 160 * scale
+            local halfHeightUpM   =  80 * scale
+            local halfHeightDownM =  70 * scale
+
+            -- Panel distance is the forward offset used when building hudPos: (0.3 + zoom)
+            -- Using that constant avoids drift from world-movement since hudPos is initialized once.
+            -- Empirical factor: visual angular size of the HUD box is about
+            -- half of the naive tan(width/distance) using the forward offset only,
+            -- so use a 2x distance factor to match on‑screen box.
+            local dPanel = 4.0 * (0.3 + (zoom or 0))
+            if dPanel < 1e-3 or dPanel ~= dPanel then dPanel = 1.0 end -- guard against degenerate/NaN
+
+            -- Angular errors using atan2-style
+            local yawErrDeg   = math.deg(math.atan(math.abs(toDest:dot(right)),  fx))
+            local pitchDeg    = math.deg(math.atan(        toDest:dot(up),      fx)) -- signed up(+)/down(-)
+
+            -- Max allowed angles subtended by the box at the HUD distance
+            local maxYawDeg        = math.deg(math.atan(halfWidthM,      dPanel))
+            local maxPitchUpDeg    = math.deg(math.atan(halfHeightUpM,   dPanel))
+            local maxPitchDownDeg  = math.deg(math.atan(halfHeightDownM, dPanel))
+            
+            --DistIndicator.setText(string.format("%.0f : %.0f : %.0f : %.0f : %.0f",yawErrDeg,maxYawDeg,pitchDeg,maxPitchUpDeg,maxPitchDownDeg))
+            if (yawErrDeg <= maxYawDeg) and (pitchDeg <= maxPitchUpDeg) and (pitchDeg >= -maxPitchDownDeg) then
+                -- Project destination onto HUD plane at distance dPanel and map to HUD units
+                local t = dPanel / fx
+                local mx = (toDest:dot(right) * t) / scale
+                local my = (toDest:dot(up)    * t) / scale
+                -- Clamp to the capture box extents
+                if mx >  160 then mx =  160 end
+                if mx < -160 then mx = -160 end
+                if my >   80 then my =   80 end
+                if my <  -70 then my =  -70 end
+                DestSpaceMarkerObj.move(mx, my, nil, true)
+                DestSpaceMarkerObj.showDraw()
+            else
+                DestSpaceMarkerObj.hideDraw()
+            end
+        end
+    else
+        DestSpaceMarkerObj.hideDraw()
+    end
+
+
+
+    if enviro then AltIndicator.move(0, altScaled, nil, true) else AltIndicator.move(0, climbScaled, nil, true) end
+
+    -- Update fuel eco (kg/min) in realtime; only display zero after 20s with no consumption
     local now = system.getArkTime()
     local atmoKg, spaceKg = getFuelMassTotals()
     -- Always show current mass
@@ -619,41 +708,74 @@ local function updateHud()
         __prevFuelSampleT = now
         __prevAtmoKg = atmoKg
         __prevSpaceKg = spaceKg
+        __lastAtmoUseT = now
+        __lastSpaceUseT = now
     else
         local dt = now - __prevFuelSampleT
         if dt > 0 then
-            local usedAtmo = math.max(0, (__prevAtmoKg or atmoKg) - atmoKg)
-            local usedSpace = math.max(0, (__prevSpaceKg or spaceKg) - spaceKg)
+            local usedAtmo = math.max(0, (__prevAtmoKg or atmoKg) - (atmoKg or 0))
+            local usedSpace = math.max(0, (__prevSpaceKg or spaceKg) - (spaceKg or 0))
+
+            if usedAtmo > 0 then __lastAtmoUseT = now end
+            if usedSpace > 0 then __lastSpaceUseT = now end
+
             __fuelAccumAtmoUsed = __fuelAccumAtmoUsed + usedAtmo
             __fuelAccumSpaceUsed = __fuelAccumSpaceUsed + usedSpace
             __fuelAccumDt = __fuelAccumDt + dt
-            __prevAtmoKg = atmoKg
-            __prevSpaceKg = spaceKg
-            __prevFuelSampleT = now
-            -- Recompute once per 2s window to avoid flicker and 0 spikes
-            if __fuelAccumDt >= 2 then
-                local atmoKgPerMin = (__fuelAccumAtmoUsed / __fuelAccumDt) * 60
-                local spaceKgPerMin = (__fuelAccumSpaceUsed / __fuelAccumDt) * 60
-                if atmoKgPerMin > 0 then
-                    atmo_eco = math.floor(atmoKgPerMin + 0.5)
-                    local atmoKgPerSec = atmoKgPerMin / 60
-                    atmo_s_remain = math.floor(atmoKg / atmoKgPerSec + 0.5)
+
+            -- Trim accumulation window to at most 20s to keep a responsive average
+            if __fuelAccumDt > 20 then
+                local r = 20 / __fuelAccumDt
+                __fuelAccumAtmoUsed = __fuelAccumAtmoUsed * r
+                __fuelAccumSpaceUsed = __fuelAccumSpaceUsed * r
+                __fuelAccumDt = 20
+            end
+
+            -- Recompute every frame for realtime display
+            local atmoKgPerMin = (__fuelAccumDt > 0) and ((__fuelAccumAtmoUsed / __fuelAccumDt) * 60) or 0
+            local spaceKgPerMin = (__fuelAccumDt > 0) and ((__fuelAccumSpaceUsed / __fuelAccumDt) * 60) or 0
+
+            if atmoKgPerMin > 0 then
+                __lastAtmoEcoKgMin = atmoKgPerMin
+            end
+            if spaceKgPerMin > 0 then
+                __lastSpaceEcoKgMin = spaceKgPerMin
+            end
+
+            -- Only show zero if no fuel consumed for >= 20s
+            if __lastAtmoUseT and (now - __lastAtmoUseT) >= 20 then
+                atmo_eco = 0
+                atmo_s_remain = 0
+            else
+                local effAtmoKgPerMin = (atmoKgPerMin > 0) and atmoKgPerMin or __lastAtmoEcoKgMin
+                if effAtmoKgPerMin > 0 then
+                    atmo_eco = math.floor(effAtmoKgPerMin + 0.5)
+                    local atmoKgPerSec = effAtmoKgPerMin / 60
+                    atmo_s_remain = math.floor((atmoKg or 0) / atmoKgPerSec + 0.5)
                 else
                     atmo_eco = 0
                     atmo_s_remain = 0
                 end
-                if spaceKgPerMin > 0 then
-                    space_eco = math.floor(spaceKgPerMin + 0.5)
-                    local spaceKgPerSec = spaceKgPerMin / 60
-                    space_s_remain = math.floor(spaceKg / spaceKgPerSec + 0.5)
+            end
+
+            if __lastSpaceUseT and (now - __lastSpaceUseT) >= 20 then
+                space_eco = 0
+                space_s_remain = 0
+            else
+                local effSpaceKgPerMin = (spaceKgPerMin > 0) and spaceKgPerMin or __lastSpaceEcoKgMin
+                if effSpaceKgPerMin > 0 then
+                    space_eco = math.floor(effSpaceKgPerMin + 0.5)
+                    local spaceKgPerSec = effSpaceKgPerMin / 60
+                    space_s_remain = math.floor((spaceKg or 0) / spaceKgPerSec + 0.5)
                 else
                     space_eco = 0
                     space_s_remain = 0
                 end
-                __fuelAccumAtmoUsed = 0
-                __fuelAccumSpaceUsed = 0
-                __fuelAccumDt = 0
             end
+
+            __prevAtmoKg = atmoKg
+            __prevSpaceKg = spaceKg
+            __prevFuelSampleT = now
         end
     end
 
@@ -704,9 +826,9 @@ local function updateHud()
         and type(tele_lat) == 'number' and type(tele_lon) == 'number' and type(tele_alt) == 'number' then
         TelemetryDestInfoObj.setText(string.format("%s - %.02f/%.02f - %.0f alt", bodyTbl.name[1], tele_lat, tele_lon, tele_alt))
         if timetotarget > 3600 then
-            DestArrivalTeleObj.setText(string.format("Time to Target: %.0f h",timetotarget))
+            DestArrivalTeleObj.setText(string.format("Time to Target: %.0f h",math.floor(timetotarget / 3600  + 0.5)))
         elseif timetotarget > 60 then
-            DestArrivalTeleObj.setText(string.format("Time to Target: %.0f m",timetotarget))
+            DestArrivalTeleObj.setText(string.format("Time to Target: %.0f m",math.floor(timetotarget / 60  + 0.5)))
         else
             DestArrivalTeleObj.setText(string.format("Time to Target: %.0f s",timetotarget))
         end
@@ -787,25 +909,33 @@ local function updateHud()
 
     if change_enviro then
         if enviro then
-            hudMaster.addSubElement(VeloLabel)
-            hudMaster.addSubElement(AltLabel)
-            hudMaster.addSubElement(AltIndicator)
-            hudMaster.addSubElement(VeloIndicator)
-            hudMaster.addSubElement(LadderLObj)
-            hudMaster.addSubElement(LadderRObj)
-            hudMaster.addSubElement(TickerObj)
-
-
+            CaptureBoxObj.hideDraw()
+            DistIndicator.showDraw()
+            VeloLabel.showDraw()
+            AltLabel.showDraw()
+            CenterObj.showDraw()
+            AltIndicator.showDraw()
+            VeloIndicator.showDraw()
+            AzimIndicator.showDraw()
+            LadderLObj.showDraw()
+            LadderRObj.showDraw()
+            TickerObj.showDraw()
+            ThrottleBar.showDraw()
+            StallOrb.showDraw()
         else
-            hudMaster.removeSubElement(VeloLabel)
-            hudMaster.removeSubElement(AltLabel)
-            hudMaster.removeSubElement(AltIndicator)
-            hudMaster.removeSubElement(VeloIndicator)
-            hudMaster.removeSubElement(LadderLObj)
-            hudMaster.removeSubElement(LadderRObj)
-            hudMaster.removeSubElement(TickerObj)
-
-
+            CaptureBoxObj.showDraw()
+            DistIndicator.showDraw()
+            VeloLabel.hideDraw()
+            AltLabel.hideDraw()
+            CenterObj.showDraw()
+            AltIndicator.showDraw()
+            VeloIndicator.hideDraw()
+            AzimIndicator.showDraw()
+            LadderLObj.hideDraw()
+            LadderRObj.hideDraw()
+            TickerObj.hideDraw()
+            ThrottleBar.showDraw()
+            StallOrb.showDraw()
         end
     end
             
@@ -818,30 +948,6 @@ local function parsePosString(s)
     local a,b,lat,lon,alt = s:match('::pos{%s*([%-%d%.]+)%s*,%s*([%-%d%.]+)%s*,%s*([%-%d%.]+)%s*,%s*([%-%d%.]+)%s*,%s*([%-%d%.]+)%s*}')
     if not a then return nil end
     return tonumber(a), tonumber(b), tonumber(lat), tonumber(lon), tonumber(alt)
-end
-
-local function getBodyCenter(systemId, bodyId)
-    local sys = atlas[systemId]
-    if not sys then return nil end
-    local body = sys[bodyId]
-    if not body then return nil end
-    local c = body.center
-    local r = body.radius or 0
-    return c, r
-end
-
-local function latLonAltToWorld(center, radius, latDeg, lonDeg, altM)
-    local lat = math.rad(latDeg or 0)
-    local lon = math.rad(lonDeg or 0)
-    local rad = (radius or 0) + (altM or 0)
-    local x = rad * math.cos(lat) * math.cos(lon)
-    local y = rad * math.cos(lat) * math.sin(lon)
-    local z = rad * math.sin(lat)
-    return vec3((center[1] or 0) + x, (center[2] or 0) + y, (center[3] or 0) + z)
-end
-
-local function v3sub(a, b)
-    return vec3((a.x or a[1] or 0) - (b.x or b[1] or 0), (a.y or a[2] or 0) - (b.y or b[2] or 0), (a.z or a[3] or 0) - (b.z or b[3] or 0))
 end
 
 -- Handle chat input to set destination
@@ -991,7 +1097,7 @@ end
 unit:onEvent('onStop', function (self)
     system.setWaypoint(system.getWaypointFromPlayerPos(),false)
     -- Widgets and panels intentionally disabled
-    if lights then lights.deactivate() end
+    if switch then switch.deactivate() end
     unit.switchOffHeadlights()
 end )
 
@@ -1054,9 +1160,12 @@ system:onEvent('onFlush', function (self)
             local pos = vec3(construct.getWorldPosition())
             local toDest = v3sub(__destPos, pos)
             local up = vec3(construct.getWorldOrientationUp())
+            local right = vec3(construct.getWorldOrientationRight())
             -- Project destination vector onto horizontal plane (azimuth only)
             local toFlat = toDest - up * toDest:dot(up)
+            local toStraight = toDest - right * toDest:dot(right)
             local len = toFlat:len()
+            local narrow = toStraight:len()
             if len > 1e-6 then
                 toFlat = toFlat / len
                 local fwd = vec3(construct.getWorldOrientationForward())
@@ -1064,9 +1173,20 @@ system:onEvent('onFlush', function (self)
                 local x = toFlat:dot(fwd)
                 local y = toFlat:dot(right)
                 local yawDeg = math.deg(math.atan(y, x)) -- signed, -180..180
-                -- Clamp to ±90 for scale window
+                -- Clamp to +/-90 for scale window
                 local dev = math.max(-90, math.min(90, yawDeg))
-                headingScaled = math.floor((dev / 90) * -130 + 0.5)
+                headingScaled = math.floor((dev / 90) * 130 + 0.5)
+            end
+            if narrow > 1e-6 then
+                toStraight = toStraight / narrow
+                local fwd = vec3(construct.getWorldOrientationForward())
+                local up = vec3(construct.getWorldOrientationUp())
+                local x = toStraight:dot(fwd)
+                local y = toStraight:dot(up)
+                local pitchDeg = math.deg(math.atan(y, x)) -- signed, -180..180
+                local clamped = clamp(pitchDeg, -45, 45)   -- limit to +/-45
+                local scaled = (clamped + 45) / 90         -- normalize to 0..1
+                climbScaled = math.floor(scaled * 110 + 0.5)
             end
         end
     end
@@ -1297,10 +1417,10 @@ system:onEvent('onActionStart', function (self, action)
     elseif action == 'light' then
             if unit.isAnyHeadlightSwitchedOn() then
                 unit.switchOffHeadlights()
-                if lights then lights.deactivate() end
+                if switch then switch.deactivate() end
             else
                 unit.switchOnHeadlights()
-                if lights then lights.activate() end
+                if switch then switch.activate() end
             end
         
     elseif action == 'left' then
