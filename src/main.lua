@@ -37,6 +37,9 @@ local __lastAtmoUseT = nil
 local __lastSpaceUseT = nil
 local __lastAtmoEcoKgMin = 0
 local __lastSpaceEcoKgMin = 0
+-- Fuel smoothing and zero display controls
+local FUEL_SMOOTH_WINDOW_S = 2   -- seconds to average realtime rate
+local FUEL_ZERO_DELAY_S    = 20  -- seconds idle before showing zero
 local k = 0.5522847498307936
 local sustenationSpeed = 474 --export The sustentation speed (in km/h) of the construct as stated in build mode.
 local bingoFuel = 500 --export The mass of fuel (in kg) that would be deemed sufficient to return to base with.
@@ -723,12 +726,12 @@ local function updateHud()
             __fuelAccumSpaceUsed = __fuelAccumSpaceUsed + usedSpace
             __fuelAccumDt = __fuelAccumDt + dt
 
-            -- Trim accumulation window to at most 20s to keep a responsive average
-            if __fuelAccumDt > 20 then
-                local r = 20 / __fuelAccumDt
+            -- Trim accumulation window to at most FUEL_SMOOTH_WINDOW_S for realtime smoothing
+            if __fuelAccumDt > FUEL_SMOOTH_WINDOW_S then
+                local r = FUEL_SMOOTH_WINDOW_S / __fuelAccumDt
                 __fuelAccumAtmoUsed = __fuelAccumAtmoUsed * r
                 __fuelAccumSpaceUsed = __fuelAccumSpaceUsed * r
-                __fuelAccumDt = 20
+                __fuelAccumDt = FUEL_SMOOTH_WINDOW_S
             end
 
             -- Recompute every frame for realtime display
@@ -742,8 +745,8 @@ local function updateHud()
                 __lastSpaceEcoKgMin = spaceKgPerMin
             end
 
-            -- Only show zero if no fuel consumed for >= 20s
-            if __lastAtmoUseT and (now - __lastAtmoUseT) >= 20 then
+            -- Only show zero if no fuel consumed for >= FUEL_ZERO_DELAY_S
+            if __lastAtmoUseT and (now - __lastAtmoUseT) >= FUEL_ZERO_DELAY_S then
                 atmo_eco = 0
                 atmo_s_remain = 0
             else
@@ -758,7 +761,7 @@ local function updateHud()
                 end
             end
 
-            if __lastSpaceUseT and (now - __lastSpaceUseT) >= 20 then
+            if __lastSpaceUseT and (now - __lastSpaceUseT) >= FUEL_ZERO_DELAY_S then
                 space_eco = 0
                 space_s_remain = 0
             else
