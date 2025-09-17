@@ -5,12 +5,13 @@ pitchInput = 0
 rollInput = 0
 yawInput = 0
 brakeInput = 0
-stallScaled = 0
-headingScaled = 0
-speedScaled = 0
-altScaled = 0
-throttleScaled = 0
-distKm = 0
+local stallScaled = 0
+local headingScaled = 0
+local climbScaled = 0
+local speedScaled = 0
+local altScaled = 0
+local throttleScaled = 0
+local distKm = 0
 local constructVelocity = {0,0,0}
 local velocity = 0
 local altM = 0
@@ -22,6 +23,8 @@ local space_mass = 0
 local space_s_remain = 0
 local tele_sysId, tele_bodyId, tele_lat, tele_lon, tele_alt = 0, 0, 0, 0, 0
 local tele_name, tele_posStr = "",""
+local enviro = true
+local change_enviro = true
 -- Fuel sampling state
 local __prevFuelSampleT = nil
 local __prevAtmoKg = nil
@@ -31,12 +34,14 @@ local __fuelAccumAtmoUsed = 0
 local __fuelAccumSpaceUsed = 0
 local k = 0.5522847498307936
 local sustenationSpeed = 221 --export The sustentation speed (in km/h) of the construct as stated in build mode.
-local bingoFuel = 500 --export The mass of fuel (in kg) that would be deemed sufficient to return to base on.
+local bingoFuel = 500 --export The mass of fuel (in kg) that would be deemed sufficient to return to base with.
 
 Nav = Navigator.new(system, core, unit)
 Nav.axisCommandManager:setupCustomTargetSpeedRanges(axisCommandId.longitudinal, {1000, 5000, 10000, 20000, 30000})
 
 system.clearWaypoint(false)
+if lights then lights.activate() end
+unit.switchOnHeadlights()
 
 -- Widgets and panels intentionally disabled
 unit.hideWidget()
@@ -194,7 +199,7 @@ StallOrbPath = PathBuilder()
     .cubicCurve(cx + k*r, cy - r, cx + r, cy - k*r, cx + r, cy)
     .closePath()
 
-local CenterObjPath = PathBuilder()
+CenterObjPath = PathBuilder()
     .setStroke('green', false)
     .setStrokeWidth(3, false)
     .moveTo( 7, 7)
@@ -228,7 +233,7 @@ AltIndicatorPath = PathBuilder()
     .lineTo(-150,-55)
     .closePath()
 
-local LadderLObjPath = PathBuilder()
+LadderLObjPath = PathBuilder()
     .setFill('green', false)
     .setFillOpacity(1, false)
     .moveTo(-160, 50)
@@ -236,7 +241,7 @@ local LadderLObjPath = PathBuilder()
     .lineTo(-170,-60)
     .closePath()
 
-local LadderRObjPath = PathBuilder()
+LadderRObjPath = PathBuilder()
     .setFill('green', false)
     .setFillOpacity(1, false)
     .moveTo( 160, 50)
@@ -250,11 +255,20 @@ ThrottleBarPath = PathBuilder()
     .moveTo( 175,-60)
     .lineTo( 175, 50)
 
-local TickerObjPath = PathBuilder()
+TickerObjPath = PathBuilder()
     .setStroke('green', false)
     .setStrokeWidth(5, false)
     .moveTo(-130, 80)
     .lineTo( 130, 80)
+
+CaptureBoxPath = PathBuilder()
+    .setStroke('green', false)
+    .setStrokeWidth(5, false)
+    .moveTo(-160, 80)
+    .lineTo( 160, 80)
+    .lineTo( 160, -50)
+    .lineTo(-160, -50)
+    .closePath()
 
 
 hudMaster = pHud.createCustomDraw(0,0,0)
@@ -277,6 +291,12 @@ StallOrb.usePathBuilder(StallOrbPath)
 StallOrb.setPositionIsRelative(true)
 StallOrb.setScale(1/600)
 StallOrb.build()
+
+CaptureBoxObj = pHud.createCustomDraw(0,0,0.00011)
+CaptureBoxObj.usePathBuilder(CaptureBoxPath)
+CaptureBoxObj.setPositionIsRelative(true)
+CaptureBoxObj.setScale(1/600)
+CaptureBoxObj.build()
 
 DistIndicator = pHud.createText(0,0,0.0002)
 DistIndicator.setPositionIsRelative(true)
@@ -361,15 +381,8 @@ TickerObj.build()
 
 hudMaster.addSubElement(StallOrb)
 hudMaster.addSubElement(DistIndicator)
-hudMaster.addSubElement(VeloLabel)
-hudMaster.addSubElement(AltLabel)
 hudMaster.addSubElement(CenterObj)
-hudMaster.addSubElement(AltIndicator)
-hudMaster.addSubElement(VeloIndicator)
 hudMaster.addSubElement(AzimIndicator)
-hudMaster.addSubElement(LadderLObj)
-hudMaster.addSubElement(LadderRObj)
-hudMaster.addSubElement(TickerObj)
 hudMaster.addSubElement(ThrottleBar)
 
 AnnounceFuelAtmoPath = PathBuilder()
@@ -390,27 +403,27 @@ AnnounceFuelSpacePath = PathBuilder()
     .lineTo( 2,33)
     .closePath()
 
-FuelGaugeAtmoObj = pMfdR.createText(0,0,0.0001)
-FuelGaugeAtmoObj.setPositionIsRelative(true)
-FuelGaugeAtmoObj.setFontColor('green')
-FuelGaugeAtmoObj.setFontSize(6)
-FuelGaugeAtmoObj.move(-90, 25)
-FuelGaugeAtmoObj.setAlignmentX('start')
-FuelGaugeAtmoObj.setAlignmentY('middle')
-FuelGaugeAtmoObj.setText('Atmo Fuel')
-FuelGaugeAtmoObj.setWeight(0.002)
-FuelGaugeAtmoObj.setScale(1/600)
+FuelGaugeObj = pMfdR.createText(0,0,0.0001)
+FuelGaugeObj.setPositionIsRelative(true)
+FuelGaugeObj.setFontColor('green')
+FuelGaugeObj.setFontSize(6)
+FuelGaugeObj.move(-90, 25)
+FuelGaugeObj.setAlignmentX('start')
+FuelGaugeObj.setAlignmentY('middle')
+FuelGaugeObj.setText('Atmo Fuel')
+FuelGaugeObj.setWeight(0.002)
+FuelGaugeObj.setScale(1/600)
 
-FuelGaugeSpaceObj = pMfdR.createText(0,0,0.0002)
-FuelGaugeSpaceObj.setPositionIsRelative(true)
-FuelGaugeSpaceObj.setFontColor('green')
-FuelGaugeSpaceObj.setFontSize(6)
-FuelGaugeSpaceObj.move(-90, 15)
-FuelGaugeSpaceObj.setAlignmentX('start')
-FuelGaugeSpaceObj.setAlignmentY('middle')
-FuelGaugeSpaceObj.setText('Space Fuel')
-FuelGaugeSpaceObj.setWeight(0.002)
-FuelGaugeSpaceObj.setScale(1/600)
+DestArrivalTeleObj = pMfdR.createText(0,0,0.0002)
+DestArrivalTeleObj.setPositionIsRelative(true)
+DestArrivalTeleObj.setFontColor('green')
+DestArrivalTeleObj.setFontSize(6)
+DestArrivalTeleObj.move(-90, 5)
+DestArrivalTeleObj.setAlignmentX('start')
+DestArrivalTeleObj.setAlignmentY('middle')
+DestArrivalTeleObj.setText('Space Fuel')
+DestArrivalTeleObj.setWeight(0.002)
+DestArrivalTeleObj.setScale(1/600)
 
 AnnounceFuelAtmoObj = pMfdR.createCustomDraw(0,0,0.0003)
 AnnounceFuelAtmoObj.usePathBuilder(AnnounceFuelAtmoPath)
@@ -447,8 +460,8 @@ AnnounceFuelSpaceText.setWeight(0.002)
 AnnounceFuelSpaceText.setScale(1/600)
 
 
-MfdRMaster.addSubElement(FuelGaugeAtmoObj)
-MfdRMaster.addSubElement(FuelGaugeSpaceObj)
+MfdRMaster.addSubElement(FuelGaugeObj)
+MfdRMaster.addSubElement(DestArrivalTeleObj)
 MfdRMaster.addSubElement(AnnounceFuelAtmoObj)
 MfdRMaster.addSubElement(AnnounceFuelSpaceObj)
 MfdRMaster.addSubElement(AnnounceFuelAtmoText)
@@ -587,6 +600,9 @@ local function getFuelMassTotals()
 end
 
 local function updateHud()
+    local prev_enviro = enviro 
+    enviro = ((unit.getAtmosphereDensity() or 0) > 0)
+    if prev_enviro ~= enviro then change_enviro = true end
     if distKm == 0 then DistIndicator.setText('555') else DistIndicator.setText(string.format("%.0f",distKm)) end
     AltIndicator.move(0, altScaled, nil, true)
     VeloIndicator.move(0, speedScaled, nil, true)
@@ -622,11 +638,17 @@ local function updateHud()
                     atmo_eco = math.floor(atmoKgPerMin + 0.5)
                     local atmoKgPerSec = atmoKgPerMin / 60
                     atmo_s_remain = math.floor(atmoKg / atmoKgPerSec + 0.5)
+                else
+                    atmo_eco = 0
+                    atmo_s_remain = 0
                 end
                 if spaceKgPerMin > 0 then
                     space_eco = math.floor(spaceKgPerMin + 0.5)
                     local spaceKgPerSec = spaceKgPerMin / 60
                     space_s_remain = math.floor(spaceKg / spaceKgPerSec + 0.5)
+                else
+                    space_eco = 0
+                    space_s_remain = 0
                 end
                 __fuelAccumAtmoUsed = 0
                 __fuelAccumSpaceUsed = 0
@@ -635,28 +657,30 @@ local function updateHud()
         end
     end
 
-    local atmo_hours = math.floor(atmo_s_remain / 3600)
-    local atmo_minutes = math.floor((atmo_s_remain % 3600) / 60)
-    local atmo_seconds = atmo_s_remain % 60
+    local atmo_hours = math.floor(atmo_s_remain / 3600  + 0.5)
+    local atmo_minutes = math.floor((atmo_s_remain % 3600) / 60  + 0.5)
+    local atmo_seconds = math.floor(atmo_s_remain % 60 + 0.5)
+    
+    local space_hours = math.floor(space_s_remain / 3600  + 0.5)
+    local space_minutes = math.floor((space_s_remain % 3600) / 60  + 0.5)
+    local space_seconds = math.floor(space_s_remain % 60 + 0.5)
 
-    if atmo_hours > 0 then
-        FuelGaugeAtmoObj.setText(string.format("Atmo Fuel: %01d h - %01d kg - %01d kg/min",atmo_hours,atmo_mass,atmo_eco))
-    elseif atmo_minutes > 0 then
-        FuelGaugeAtmoObj.setText(string.format("Atmo Fuel: %01d m - %01d kg - %01d kg/min",atmo_minutes,atmo_mass,atmo_eco))
+    if enviro then
+        if atmo_hours > 0 then
+            FuelGaugeObj.setText(string.format("Fuel: %01d h - %01d kg - %01d kg/min",atmo_hours,atmo_mass,atmo_eco))
+        elseif atmo_minutes > 0 then
+            FuelGaugeObj.setText(string.format("Fuel: %01d m - %01d kg - %01d kg/min",atmo_minutes,atmo_mass,atmo_eco))
+        else
+            FuelGaugeObj.setText(string.format("Fuel: %01d s - %01d kg - %01d kg/min",atmo_seconds,atmo_mass,atmo_eco))
+        end
     else
-        FuelGaugeAtmoObj.setText(string.format("Atmo Fuel: %01d s - %01d kg - %01d kg/min",atmo_seconds,atmo_mass,atmo_eco))
-    end
-
-    local space_hours = math.floor(space_s_remain / 3600)
-    local space_minutes = math.floor((space_s_remain % 3600) / 60)
-    local space_seconds = space_s_remain % 60
-
-    if space_hours > 0 then
-        FuelGaugeSpaceObj.setText(string.format("Space Fuel: %01d h - %01d kg - %01d kg/min",space_hours,space_mass,space_eco))
-    elseif space_minutes > 0 then
-        FuelGaugeSpaceObj.setText(string.format("Space Fuel: %01d m - %01d kg - %01d kg/min",space_minutes,space_mass,space_eco))
-    else
-        FuelGaugeSpaceObj.setText(string.format("Space Fuel: %01d s - %01d kg - %01d kg/min",space_seconds,space_mass,space_eco))
+        if space_hours > 0 then
+            FuelGaugeObj.setText(string.format("Fuel: %01d h - %01d kg - %01d kg/min",space_hours,space_mass,space_eco))
+        elseif space_minutes > 0 then
+            FuelGaugeObj.setText(string.format("Fuel: %01d m - %01d kg - %01d kg/min",space_minutes,space_mass,space_eco))
+        else
+            FuelGaugeObj.setText(string.format("Fuel: %01d s - %01d kg - %01d kg/min",space_seconds,space_mass,space_eco))
+        end
     end
 
     
@@ -674,17 +698,26 @@ local function updateHud()
         TelemetryDestNameObj.setText("No Destination")
     end
     
+    local timetotarget = math.floor((distKm*1000) / velocity  + 0.5)
     local bodyTbl = (atlas[tele_sysId] or {})[tele_bodyId]
-    if tele_name and tele_name ~= "" and bodyTbl and bodyTbl.name and bodyTbl.name[1]
+    if bodyTbl and bodyTbl.name and bodyTbl.name[1]
         and type(tele_lat) == 'number' and type(tele_lon) == 'number' and type(tele_alt) == 'number' then
         TelemetryDestInfoObj.setText(string.format("%s - %.02f/%.02f - %.0f alt", bodyTbl.name[1], tele_lat, tele_lon, tele_alt))
+        if timetotarget > 3600 then
+            DestArrivalTeleObj.setText(string.format("Time to Target: %.0f h",timetotarget))
+        elseif timetotarget > 60 then
+            DestArrivalTeleObj.setText(string.format("Time to Target: %.0f m",timetotarget))
+        else
+            DestArrivalTeleObj.setText(string.format("Time to Target: %.0f s",timetotarget))
+        end
     else
         TelemetryDestInfoObj.setText("--------")
+        DestArrivalTeleObj.setText("--------")
     end
 
     
     if altM > 500 then AnnounceLoAltiPath.setFill('green', false) else AnnounceLoAltiPath.setFill('red', false) end
-    if ((velocity > sustenationSpeed/2) and ((unit.getAtmosphereDensity() or 0) > 0)) or ((unit.getAtmosphereDensity() or 0) <= 0) then AnnounceLoSpeedPath.setFill('green', false) else AnnounceLoSpeedPath.setFill('red', false) end
+    if ((velocity > sustenationSpeed/2) and enviro) or ((unit.getAtmosphereDensity() or 0) <= 0) then AnnounceLoSpeedPath.setFill('green', false) else AnnounceLoSpeedPath.setFill('red', false) end
 
     applyPath(AnnounceLoAltiObj, AnnounceLoAltiPath)
     applyPath(AnnounceLoSpeedObj, AnnounceLoSpeedPath)
@@ -751,6 +784,32 @@ local function updateHud()
     
     applyPath(StallOrb, StallOrbPath)
     applyPath(ThrottleBar, ThrottleBarPath)
+
+    if change_enviro then
+        if enviro then
+            hudMaster.addSubElement(VeloLabel)
+            hudMaster.addSubElement(AltLabel)
+            hudMaster.addSubElement(AltIndicator)
+            hudMaster.addSubElement(VeloIndicator)
+            hudMaster.addSubElement(LadderLObj)
+            hudMaster.addSubElement(LadderRObj)
+            hudMaster.addSubElement(TickerObj)
+
+
+        else
+            hudMaster.removeSubElement(VeloLabel)
+            hudMaster.removeSubElement(AltLabel)
+            hudMaster.removeSubElement(AltIndicator)
+            hudMaster.removeSubElement(VeloIndicator)
+            hudMaster.removeSubElement(LadderLObj)
+            hudMaster.removeSubElement(LadderRObj)
+            hudMaster.removeSubElement(TickerObj)
+
+
+        end
+    end
+            
+    change_enviro = false
 end
 
 -- Parse ::pos{system, body, latDeg, lonDeg, altM}
@@ -932,6 +991,7 @@ end
 unit:onEvent('onStop', function (self)
     system.setWaypoint(system.getWaypointFromPlayerPos(),false)
     -- Widgets and panels intentionally disabled
+    if lights then lights.deactivate() end
     unit.switchOffHeadlights()
 end )
 
@@ -1015,7 +1075,7 @@ system:onEvent('onFlush', function (self)
         local fwd = vec3(construct.getWorldOrientationForward())
         velocity = constructVelocity:dot(fwd) * 3.6 -- km/h along forward
         if velocity < 0 then velocity = 0 end
-        local s = math.min(velocity, 800) / 800 * 110
+        local s = math.min(velocity, 1000) / 1000 * 110
         speedScaled = math.floor(s + 0.5)
     end
 
@@ -1237,8 +1297,10 @@ system:onEvent('onActionStart', function (self, action)
     elseif action == 'light' then
             if unit.isAnyHeadlightSwitchedOn() then
                 unit.switchOffHeadlights()
+                if lights then lights.deactivate() end
             else
                 unit.switchOnHeadlights()
+                if lights then lights.activate() end
             end
         
     elseif action == 'left' then
