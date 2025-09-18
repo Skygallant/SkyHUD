@@ -21,7 +21,7 @@ local atmo_s_remain = 0
 local space_eco = 0
 local space_mass = 0
 local space_s_remain = 0
-local tele_sysId, tele_bodyId, tele_lat, tele_lon, tele_alt = 0, 0, 0, 0, 0
+local tele_sysId, tele_bodyId, tele_lat, tele_lon, tele_alt = 0, nil, 0, 0, 0
 local tele_name, tele_posStr = "",""
 local enviro = true
 local change_enviro = true
@@ -612,10 +612,16 @@ local function latLonAltToWorld(center, radius, latDeg, lonDeg, altM)
     return vec3((center[1] or 0) + x, (center[2] or 0) + y, (center[3] or 0) + z)
 end
 
-
 local function getBodyCenter(systemId, bodyId)
     local sys = atlas[systemId]
     if not sys then return nil end
+
+    -- Treat bodyId 0 as a valid "space" position around the system barycenter.
+    -- Use world origin with zero radius so lat/lon/alt compute to a point in space.
+    if bodyId == 0 then
+        return {0, 0, 0}, 0
+    end
+
     local body = sys[bodyId]
     if not body then return nil end
     local c = body.center
@@ -623,9 +629,42 @@ local function getBodyCenter(systemId, bodyId)
     return c, r
 end
 
+-- Convert a ::pos triple to world coordinates.
+-- For bodyId == 0, interpret the triple as world X/Y/Z (space coords).
+-- For other bodies, interpret as lat/lon/alt on the given body.
+local function posToWorld(systemId, bodyId, a, b, c)
+    if bodyId == 0 then
+        return vec3(a or 0, b or 0, c or 0)
+    end
+    local center, radius = getBodyCenter(systemId, bodyId)
+    if center and radius then
+        return latLonAltToWorld(center, radius, a, b, c)
+    end
+    return nil
+end
 
 local function v3sub(a, b)
     return vec3((a.x or a[1] or 0) - (b.x or b[1] or 0), (a.y or a[2] or 0) - (b.y or b[2] or 0), (a.z or a[3] or 0) - (b.z or b[3] or 0))
+end
+
+-- Find the nearest body's display name within a system to a world position
+local function getNearestBodyName(systemId, worldPos)
+    local sys = atlas[systemId]
+    if not sys or not worldPos then return nil end
+    local bestName, bestD2 = nil, nil
+    for id, body in pairs(sys) do
+        local c = body and body.center
+        local n = body and body.name and body.name[1]
+        if c and n then
+            local d = v3sub(worldPos, c)
+            local d2 = d:dot(d)
+            if not bestD2 or d2 < bestD2 then
+                bestD2 = d2
+                bestName = n
+            end
+        end
+    end
+    return bestName
 end
 
 
@@ -820,21 +859,28 @@ local function updateHud()
     
     local timetotarget = math.floor((distKm*1000) / velocity  + 0.5)
     local bodyTbl = (atlas[tele_sysId] or {})[tele_bodyId]
-    if bodyTbl and bodyTbl.name and bodyTbl.name[1]
+    if tele_bodyId == 0 and atlas[tele_sysId] then
+        local nearest = getNearestBodyName(tele_sysId, __destPos)
+        if nearest then
+            TelemetryDestInfoObj.setText(string.format("Space - %s AOI", nearest))
+        else
+            TelemetryDestInfoObj.setText("Space")
+        end
+    elseif bodyTbl and bodyTbl.name and bodyTbl.name[1]
         and type(tele_lat) == 'number' and type(tele_lon) == 'number' and type(tele_alt) == 'number' then
         TelemetryDestInfoObj.setText(string.format("%s - %.02f/%.02f - %.0f alt", bodyTbl.name[1], tele_lat, tele_lon, tele_alt))
-        if timetotarget > 3600 then
-            DestArrivalTeleObj.setText(string.format("Time to Target: %.0f h",math.floor(timetotarget / 3600  + 0.5)))
-        elseif timetotarget > 60 then
-            DestArrivalTeleObj.setText(string.format("Time to Target: %.0f m",math.floor(timetotarget / 60  + 0.5)))
-        else
-            DestArrivalTeleObj.setText(string.format("Time to Target: %.0f s",timetotarget))
-        end
     else
         TelemetryDestInfoObj.setText("--------")
         DestArrivalTeleObj.setText("--------")
     end
-
+    
+    if timetotarget > 3600 then
+        DestArrivalTeleObj.setText(string.format("Time to Target: %.0f h",math.floor(timetotarget / 3600  + 0.5)))
+    elseif timetotarget > 60 then
+        DestArrivalTeleObj.setText(string.format("Time to Target: %.0f m",math.floor(timetotarget / 60  + 0.5)))
+    else
+        DestArrivalTeleObj.setText(string.format("Time to Target: %.0f s",timetotarget))
+    end
     
     if altM > 500 then AnnounceLoAltiPath.setFill('green', false) else AnnounceLoAltiPath.setFill('red', false) end
     if ((velocity > sustenationSpeed/2) and enviro) or ((unit.getAtmosphereDensity() or 0) <= 0) then AnnounceLoSpeedPath.setFill('green', false) else AnnounceLoSpeedPath.setFill('red', false) end
@@ -1027,9 +1073,9 @@ system:onEvent('onInputText', function(self, text)
         -- Also set as current destination
         tele_sysId, tele_bodyId, tele_lat, tele_lon, tele_alt = parsePosString(tele_posStr)
         if tele_sysId then
-            local center, radius = getBodyCenter(tele_sysId, tele_bodyId)
-            if center and radius then
-                __destPos = latLonAltToWorld(center, radius, tele_lat, tele_lon, tele_alt)
+            local world = posToWorld(tele_sysId, tele_bodyId, tele_lat, tele_lon, tele_alt)
+            if world then
+                __destPos = world
                 system.print(string.format('Destination set to %s', tele_name))
             end
         end
@@ -1043,10 +1089,14 @@ system:onEvent('onInputText', function(self, text)
             tele_sysId, tele_bodyId, tele_lat, tele_lon, tele_alt = sysId, bodyId, lat, lon, alt
             tele_name = "Unknown"
             tele_posStr = text
-            local center, radius = getBodyCenter(sysId, bodyId)
-            if center and radius then
-                __destPos = latLonAltToWorld(center, radius, lat, lon, alt)
-                system.print(string.format('Destination set to system %d body %d (lat %.4f, lon %.4f, alt %.1f)', sysId, bodyId, lat, lon, alt))
+            local world = posToWorld(sysId, bodyId, lat, lon, alt)
+            if world then
+                __destPos = world
+                if bodyId == 0 then
+                    system.print(string.format('Destination set to space (x %.1f, y %.1f, z %.1f)', lat, lon, alt))
+                else
+                    system.print(string.format('Destination set to system %d body %d (lat %.4f, lon %.4f, alt %.1f)', sysId, bodyId, lat, lon, alt))
+                end
                 return
             else
                 system.print('Invalid ::pos body/system for atlas')
@@ -1064,9 +1114,9 @@ system:onEvent('onInputText', function(self, text)
             local sysId, bodyId, lat, lon, alt = parsePosString(saved)
             if sysId then
                 tele_sysId, tele_bodyId, tele_lat, tele_lon, tele_alt = sysId, bodyId, lat, lon, alt
-                local center, radius = getBodyCenter(sysId, bodyId)
-                if center and radius then
-                    __destPos = latLonAltToWorld(center, radius, lat, lon, alt)
+                local world = posToWorld(sysId, bodyId, lat, lon, alt)
+                if world then
+                    __destPos = world
                     system.print(string.format('Destination recalled: %s -> %s', key, saved))
                     return
                 else
