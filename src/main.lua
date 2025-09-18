@@ -857,9 +857,9 @@ local function updateHud()
         TelemetryDestNameObj.setText("No Destination")
     end
 
-    local toTarget = (v3sub(__destPos, pos)):normalize()
-    local closingMps = constructVelocity:dot(toTarget)
-    local timetotarget = (closingMps > 0) and math.floor((distKm*1000) / closingMps + 0.5) or math.huge
+    local timetotarget = 0
+    if __destPos then timetotarget = math.max(math.floor((distKm / velocity) * 3600 + 0.5),0) end
+    if timetotarget == 0 then timetotarget = math.huge end
     
     local bodyTbl = (atlas[tele_sysId] or {})[tele_bodyId]
     if tele_bodyId == 0 and atlas[tele_sysId] then
@@ -874,7 +874,6 @@ local function updateHud()
         TelemetryDestInfoObj.setText(string.format("%s - %.02f/%.02f - %.0f alt", bodyTbl.name[1], tele_lat, tele_lon, tele_alt))
     else
         TelemetryDestInfoObj.setText("--------")
-        DestArrivalTeleObj.setText("--------")
     end
     
     if timetotarget > 3600 then
