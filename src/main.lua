@@ -1216,7 +1216,7 @@ system:onEvent('onFlush', function (self)
             end
         end
         altM = math.max(nearestDist - nearestRadius, 0)
-        local s = math.min(altM, 2000) / 2000 * 110
+        local s = math.min(altM, 3500) / 3500 * 110
         altScaled = math.floor(s + 0.5)
     end
 
