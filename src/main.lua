@@ -856,8 +856,11 @@ local function updateHud()
     else
         TelemetryDestNameObj.setText("No Destination")
     end
+
+    local toTarget = (v3sub(__destPos, pos)):normalize()
+    local closingMps = constructVelocity:dot(toTarget)
+    local timetotarget = (closingMps > 0) and math.floor((distKm*1000) / closingMps + 0.5) or math.huge
     
-    local timetotarget = math.floor((distKm*1000) / velocity  + 0.5)
     local bodyTbl = (atlas[tele_sysId] or {})[tele_bodyId]
     if tele_bodyId == 0 and atlas[tele_sysId] then
         local nearest = getNearestBodyName(tele_sysId, __destPos)
