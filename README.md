@@ -30,6 +30,10 @@ An immersive fighter HUD for first person flying.
 * Prefix the destination with a single worded name to save that destination to the databank.
 * Type the name of a destination to recall it.
 * Type "list" to recall all known destinations.
+### Autopilot
+There are two autopilot features, they onyl work in space and you must have a destination set for them to work.
+* Auto Brake - crosshair will turn red when activated, will stop your ship so you arrive 10km from either your destination or the atmopshere of your destination's planet.
+* Auto Align - the destination 3D marker will turn red when activated, your ship will automatically turn to point directly at your destination by overriding pitch and yaw controls.
 
 ## Compiling
 * Run du-lua build to output the .conf file for use in control units, in-game.

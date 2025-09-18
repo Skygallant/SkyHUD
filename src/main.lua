@@ -5,6 +5,7 @@ pitchInput = 0
 rollInput = 0
 yawInput = 0
 brakeInput = 0
+local brakedist = 0
 local stallScaled = 0
 local headingScaled = 0
 local climbScaled = 0
@@ -14,6 +15,7 @@ local throttleScaled = 0
 local distKm = 0
 local constructVelocity = {0,0,0}
 local velocity = 0
+local shipspeed = 0
 local altM = 0
 local atmo_eco = 0
 local atmo_mass = 0
@@ -25,6 +27,12 @@ local tele_sysId, tele_bodyId, tele_lat, tele_lon, tele_alt = 0, nil, 0, 0, 0
 local tele_name, tele_posStr = "",""
 local enviro = true
 local change_enviro = true
+-- Auto Pilot
+local autoAlign = false
+local autoBrake = false
+-- Auto-align smoothing state
+local __alignYawCmd = 0
+local __alignPitchCmd = 0
 -- Fuel sampling state
 local __prevFuelSampleT = nil
 local __prevAtmoKg = nil
@@ -575,6 +583,13 @@ local function applyPath(el, pb)
 end
 
 
+local function applyColor(el, pb)
+    local drawStr, data, flat = pb.getResult()
+    el.setDrawData(data)
+    el.setDefaultDraw(drawStr) -- triggers redraw
+end
+
+
 local function clamp(v, lo, hi)
     if v < lo then return lo end
     if v > hi then return hi end
@@ -667,6 +682,41 @@ local function getNearestBodyName(systemId, worldPos)
     return bestName
 end
 
+-- Distance from craft to destination body’s atmosphere along the line to __destPos (meters)
+local function distanceToDestAtmosphere()
+    if not __destPos or not tele_sysId then return math.huge end
+    if tele_bodyId == 0 then return math.huge end
+    local body = (atlas[tele_sysId] or {})[tele_bodyId]
+    if not body then return math.huge end
+    local R = (body.hasAtmosphere and body.atmosphereRadius) or (body.radius or 0)
+    local Ctbl = body.center
+    if not (R and R > 0 and Ctbl) then return math.huge end
+
+    local C  = vec3(Ctbl[1], Ctbl[2], Ctbl[3])
+    local P0 = vec3(construct.getWorldPosition())
+    local dirVec = v3sub(__destPos, P0)
+    local dirLen = dirVec:len()
+    if dirLen <= 1e-6 then return math.huge end
+    local dir = dirVec / dirLen
+
+    -- Ray-sphere intersection: ||(P0 + t*dir) - C||^2 = R^2
+    local OC   = v3sub(P0, C)
+    local b    = OC:dot(dir)
+    local c    = OC:dot(OC) - R * R
+    local disc = b * b - c
+    if disc and disc >= 0 then
+        local root = math.sqrt(disc)
+        local t1 = -b - root
+        local t2 = -b + root
+        local t
+        if t1 >= 0 then t = t1
+        elseif t2 >= 0 then t = t2 end
+        if t and t >= 0 then return t end
+    end
+    -- Fallback: radial gap to the atmosphere shell
+    local dCenter = v3sub(P0, C):len()
+    return math.max(0, dCenter - R)
+end
 
 local function updateHud()
     local prev_enviro = enviro 
@@ -727,10 +777,13 @@ local function updateHud()
                 if my <  -70 then my =  -70 end
                 DestSpaceMarkerObj.move(mx, my, nil, true)
                 DestSpaceMarkerObj.showDraw()
+                applyColor(DestSpaceMarkerObj, DestSpaceMarkerPath)
             else
                 DestSpaceMarkerObj.hideDraw()
             end
         end
+    elseif not __destPos then
+        DestSpaceMarkerObj.hideDraw()
     else
         DestSpaceMarkerObj.hideDraw()
     end
@@ -845,11 +898,12 @@ local function updateHud()
     
     if atmo_mass > bingoFuel then AnnounceFuelAtmoPath.setFill('green', false) else AnnounceFuelAtmoPath.setFill('red', false) end
     if space_mass > bingoFuel then AnnounceFuelSpacePath.setFill('green', false) else AnnounceFuelSpacePath.setFill('red', false) end
+    if autoBrake then CenterObjPath.setStroke('red', false) else CenterObjPath.setStroke('green', false) end
+    if autoAlign then DestSpaceMarkerPath.setFill('red', false) else DestSpaceMarkerPath.setFill('green', false) end
 
-
-    applyPath(AnnounceFuelAtmoObj, AnnounceFuelAtmoPath)
-    applyPath(AnnounceFuelSpaceObj, AnnounceFuelSpacePath)
-
+    applyColor(AnnounceFuelAtmoObj, AnnounceFuelAtmoPath)
+    applyColor(AnnounceFuelSpaceObj, AnnounceFuelSpacePath)
+    applyColor(CenterObj, CenterObjPath)
 
     if tele_name and tele_name ~= "" then
         TelemetryDestNameObj.setText(tostring(tele_name))
@@ -887,8 +941,8 @@ local function updateHud()
     if altM > 500 then AnnounceLoAltiPath.setFill('green', false) else AnnounceLoAltiPath.setFill('red', false) end
     if ((velocity > sustenationSpeed/2) and enviro) or ((unit.getAtmosphereDensity() or 0) <= 0) then AnnounceLoSpeedPath.setFill('green', false) else AnnounceLoSpeedPath.setFill('red', false) end
 
-    applyPath(AnnounceLoAltiObj, AnnounceLoAltiPath)
-    applyPath(AnnounceLoSpeedObj, AnnounceLoSpeedPath)
+    applyColor(AnnounceLoAltiObj, AnnounceLoAltiPath)
+    applyColor(AnnounceLoSpeedObj, AnnounceLoSpeedPath)
 
 
     local function nz(x) return (x ~= nil) and x or 0 end
@@ -902,26 +956,27 @@ local function updateHud()
                     nz(constructVelocity and constructVelocity.z)
 
     local s2 = vx*vx + vy*vy + vz*vz
-    local speed = (s2 >= 0 and finite(s2)) and math.sqrt(s2) or 0
+    local brakespeed = (s2 >= 0 and finite(s2)) and math.sqrt(s2) or 0
 
     local mass = construct.getTotalMass() or 0
 
-    if not (force > 0 and mass > 0 and finite(speed)) then
+    if not (force > 0 and mass > 0 and finite(brakespeed)) then
         TelemetryBrakeDistObj.setText("Brake in: __ s / __ m")
     else
-        if speed < 1e-3 then
+        if brakespeed < 1e-3 then
             TelemetryBrakeDistObj.setText("Brake in: 0 s / 0 m")
         else
-            local brakedist = math.floor(mass * speed * speed) / (2 * force)
-            local braketime = math.floor(((mass * speed) / force) + 0.5)
-            if brakedist < 999 then
-                TelemetryBrakeDistObj.setText(string.format("Brake in: %.0f s / %.0f m", math.min(braketime,999), math.min(brakedist,999)))
-            elseif brakedist < 199999 then
-                brakedist = brakedist / 1000
-                TelemetryBrakeDistObj.setText(string.format("Brake in: %.0f s / %.0f km", math.min(braketime,999), math.min(brakedist,999)))
+            brakedist = math.floor(mass * brakespeed * brakespeed) / (2 * force)
+            local brakedistdisplay = brakedist
+            local braketime = math.floor(((mass * brakespeed) / force) + 0.5)
+            if brakedistdisplay < 999 then
+                TelemetryBrakeDistObj.setText(string.format("Brake in: %.0f s / %.0f m", math.min(braketime,999), math.min(brakedistdisplay,999)))
+            elseif brakedistdisplay < 199999 then
+                brakedistdisplay = brakedistdisplay / 1000
+                TelemetryBrakeDistObj.setText(string.format("Brake in: %.0f s / %.0f km", math.min(braketime,999), math.min(brakedistdisplay,999)))
             else
-                brakedist = brakedist / 200000
-                TelemetryBrakeDistObj.setText(string.format("Brake in: %.0f s / %.0f su", math.min(braketime,999), math.min(brakedist,999)))
+                brakedistdisplay = brakedistdisplay / 200000
+                TelemetryBrakeDistObj.setText(string.format("Brake in: %.0f s / %.0f su", math.min(braketime,999), math.min(brakedistdisplay,999)))
             end
         end
     end
@@ -1132,10 +1187,9 @@ system:onEvent('onInputText', function(self, text)
     system.print('Unrecognized input. Use |name ::pos{...}| to save, |::pos{...}| to set, or a saved name to recall.')
 end)
 
--- landing gear: only deploy if speed < 10 m/s
 local v = vec3(construct.getWorldVelocity())
-local speed = math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
-if speed <= 10 then
+shipspeed = math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+if shipspeed <= 10 then
     unit.deployLandingGears()
     gearExtended = true
     Nav.axisCommandManager:setTargetGroundAltitude(0)
@@ -1194,6 +1248,69 @@ system:onEvent('onFlush', function (self)
     local currentRollDeg = getRoll(worldVertical, constructForward, constructRight)
     local currentRollDegAbs = math.abs(currentRollDeg)
     local currentRollDegSign = utils.sign(currentRollDeg)
+
+    -- Auto-align: override yaw/pitch to point nose at __destPos (do not override roll)
+    do
+        if autoAlign and __destPos and not enviro then
+            local pos = vec3(construct.getWorldPosition())
+            local toDest = v3sub(__destPos, pos)
+            local toLen = toDest:len()
+            if toLen and toLen > 1e-3 then
+                -- Gains (deg -> unit input)
+                local yawGain = 0.45
+                local pitchGain = 0.45
+                local deadzoneDeg = 0.001
+
+                -- Use current axes already fetched
+                local fwd = constructForward
+                local up = constructUp
+                local right = constructRight
+
+                local x = toDest:dot(fwd)
+                local yYaw = toDest:dot(right)
+                local yPitch = toDest:dot(up)
+                local yawDeg = math.deg(math.atan(yYaw, x))
+                local pitchDeg = math.deg(math.atan(yPitch, x))
+
+                -- Convert to input with clamp and deadzone
+                local function clamp1(v)
+                    if v > 1 then return 1 elseif v < -1 then return -1 else return v end
+                end
+
+                -- Error shaping: reduce command as we close in (quadratic taper)
+                local yawNorm = math.min(math.abs(yawDeg) / 45.0, 1.0)
+                local pitchNorm = math.min(math.abs(pitchDeg) / 30.0, 1.0)
+                -- Sign conventions: positive yawDeg means target is to the right;
+                -- in this script, yaw right corresponds to negative yaw input.
+                -- positive pitchDeg means target is above; positive pitch input pitches up.
+                local yawCmdRaw = clamp1(-yawGain * yawDeg * yawNorm * yawNorm)
+                local pitchCmdRaw = clamp1( pitchGain * pitchDeg * pitchNorm * pitchNorm)
+                if math.abs(yawDeg) < deadzoneDeg then yawCmdRaw = 0 end
+                if math.abs(pitchDeg) < deadzoneDeg then pitchCmdRaw = 0 end
+
+                -- Command floor: avoid vanishing inputs above the deadzone so alignment completes
+                local minCmd = 0.03
+                if math.abs(yawDeg) >= deadzoneDeg and yawCmdRaw ~= 0 and math.abs(yawCmdRaw) < minCmd then
+                    yawCmdRaw = (yawCmdRaw > 0 and 1 or -1) * minCmd
+                end
+                if math.abs(pitchDeg) >= deadzoneDeg and pitchCmdRaw ~= 0 and math.abs(pitchCmdRaw) < minCmd then
+                    pitchCmdRaw = (pitchCmdRaw > 0 and 1 or -1) * minCmd
+                end
+
+                -- Temporal smoothing: exponential moving average
+                local alpha = 0.9 -- 0..1, higher = more responsive
+                __alignYawCmd = __alignYawCmd + alpha * (yawCmdRaw - __alignYawCmd)
+                __alignPitchCmd = __alignPitchCmd + alpha * (pitchCmdRaw - __alignPitchCmd)
+
+                finalYawInput = __alignYawCmd
+                finalPitchInput = __alignPitchCmd
+            end
+        else
+            -- Reset smoothing when inactive
+            __alignYawCmd = 0
+            __alignPitchCmd = 0
+        end
+    end
 
     -- Compute HUD values
     do
@@ -1423,6 +1540,8 @@ system:onEvent('onFlush', function (self)
 end)
 
 system:onEvent('onUpdate', function (self)
+    local v = vec3(construct.getWorldVelocity())
+    shipspeed = math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
     Nav:update()
 
     -- Update HUD
@@ -1432,6 +1551,29 @@ system:onEvent('onUpdate', function (self)
     local svg = projector.getSVG()
     if svg then system.setScreen(svg) end
 
+    if enviro then
+        autoAlign = false
+        if autoBrake then brakeInput = 0 end
+        autoBrake = false
+    end
+
+    if __destPos then
+        if tele_bodyId == 0 or not atlas[tele_sysId][tele_bodyId].hasAtmosphere then
+            if autoBrake and math.floor(distKm) < math.ceil(brakedist/1000) + 9 and shipspeed > 10 then --kilometers
+                brakeInput = 1
+            elseif autoBrake and shipspeed == 0 then
+                brakeInput = 0
+                autoBrake = false
+            end
+        else
+            if autoBrake and math.floor(distanceToDestAtmosphere()) < math.ceil(brakedist+49000) and shipspeed > 10 then --meters
+                brakeInput = 1
+            elseif autoBrake and shipspeed == 0 then
+                brakeInput = 0
+                autoBrake = false
+            end
+        end
+    end
 end)
 
 system:onEvent('onActionStart', function (self, action)
@@ -1499,6 +1641,11 @@ system:onEvent('onActionStart', function (self, action)
             Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.vertical, 1.0)
     elseif action == 'antigravity' then
         if antigrav ~= nil then antigrav.toggle() end
+    elseif action == 'option1' and __destPos and not enviro then
+        brakeInput = 0
+        autoBrake = not autoBrake
+    elseif action == 'option2' and __destPos and not enviro then
+        autoAlign = not autoAlign
     end
 end)
 
