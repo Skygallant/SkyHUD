@@ -682,6 +682,26 @@ local function getNearestBodyName(systemId, worldPos)
     return bestName
 end
 
+-- Return true if a world position is outside all atmospheres in the current dest system
+local function isWorldInSpace(systemId, worldPos)
+    local sys = atlas[systemId]
+    if not sys or not worldPos then return true end
+    local nearestD2, nearestAtmoR = math.huge, 0
+    for _, body in pairs(sys) do
+        local c = body and body.center
+        if c then
+            local d = v3sub(worldPos, c)
+            local d2 = d:dot(d)
+            if d2 < nearestD2 then
+                nearestD2 = d2
+                nearestAtmoR = (body.hasAtmosphere and body.atmosphereRadius) or (body.radius or 0)
+            end
+        end
+    end
+    if nearestD2 == math.huge then return true end
+    return math.sqrt(nearestD2) > (nearestAtmoR + 1.0)
+end
+
 -- Distance from craft to destination body’s atmosphere along the line to __destPos (meters)
 local function distanceToDestAtmosphere()
     if not __destPos or not tele_sysId then return math.huge end
@@ -1558,7 +1578,7 @@ system:onEvent('onUpdate', function (self)
     end
 
     if __destPos then
-        if tele_bodyId == 0 or not atlas[tele_sysId][tele_bodyId].hasAtmosphere then
+        if isWorldInSpace(tele_sysId, __destPos) then
             if autoBrake and math.floor(distKm) < math.ceil(brakedist/1000) + 9 and shipspeed > 10 then --kilometers
                 brakeInput = 1
             elseif autoBrake and shipspeed == 0 then
