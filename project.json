@@ -40,7 +40,7 @@
         },
         {
           "name": "switch",
-          "type": "element"
+          "type": "pressable"
         },
         {
           "name": "rx",
