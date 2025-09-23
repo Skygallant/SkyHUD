@@ -52,6 +52,20 @@ local k = 0.5522847498307936
 local sustenationSpeed = 474 --export The sustentation speed (in km/h) of the construct as stated in build mode.
 local bingoFuel = 500 --export The mass of fuel (in kg) that would be deemed sufficient to return to base with.
 
+-- Docking OLS (Optical Landing System) integration
+local OLS_REQ_CH = 42051194   -- Snub -> Mothership ping channel
+local OLS_BCAST_CH = 22554892 -- Mothership -> Snub broadcast channel
+local __olsW = { OLS1 = nil, OLS2 = nil, OLS3 = nil }  -- raw world beacons (vec3)
+local __olsS = { OLS1 = nil, OLS2 = nil, OLS3 = nil }  -- smoothed world beacons (vec3)
+local __dock = { origin = nil, x = nil, y = nil, z = nil } -- pad frame in world
+local __dockPrevOrigin = nil
+local __dockVel = nil
+local __dockLastT = nil
+local __dockValid = false
+local __dockActive = false
+local __dockPingT = nil
+local __dockHudEnabled = true -- toggle if needed later
+
 Nav = Navigator.new(system, core, unit)
 Nav.axisCommandManager:setupCustomTargetSpeedRanges(axisCommandId.longitudinal, {1000, 5000, 10000, 20000, 30000})
 
@@ -84,6 +98,12 @@ UIMfdL = objectBuilder
 UIMfdR = objectBuilder
     .setPositionType(positionTypes.localP)
     .setOrientationType(orientationTypes.localO)
+    .build()
+
+-- World-anchored object for docking visualizer (deck box etc.)
+local DockObj = ObjectBuilderLinear()
+    .setPositionType(positionTypes.globalP)
+    .setOrientationType(orientationTypes.globalO)
     .build()
 
 local function rotateAroundAxis(v, axis, deg)
@@ -157,9 +177,11 @@ UIHud.rotateXYZ({rgt.x,rgt.y,rgt.z}, {fwd.x * inverse,fwd.y * inverse,fwd.z * in
 objG1.addObject(UIHud)
 objG1.addObject(UIMfdL)
 objG1.addObject(UIMfdR)
+objG1.addObject(DockObj)
 pHud = UIHud.setUIElements()
 pMfdL = UIMfdL.setUIElements()
 pMfdR = UIMfdR.setUIElements()
+local pDock = DockObj.setUIElements()
 
 local cx, cy, w, h, x, y
 
@@ -312,6 +334,80 @@ MfdRMaster.usePathBuilder(MfdRScreen)
 MfdRMaster.setScale(1/600)
 MfdRMaster.build()
 
+-- Docking visuals: deck (16 m square), centerline, simple approach hoops
+local DOCK_SCALE = 1/600 -- world scale for dock shapes
+local DECK_HALF_M = 8     -- 16 m square => half size
+local DECK_HALF_U = DECK_HALF_M / DOCK_SCALE -- shape units
+
+local DockDeckPath = PathBuilder()
+    .setStroke('green', false)
+    .setStrokeWidth(4, false)
+    .setFillOpacity(0, false)
+    .moveTo(-DECK_HALF_U, -DECK_HALF_U)
+    .lineTo( DECK_HALF_U, -DECK_HALF_U)
+    .lineTo( DECK_HALF_U,  DECK_HALF_U)
+    .lineTo(-DECK_HALF_U,  DECK_HALF_U)
+    .closePath()
+
+local DockCenterlinePath = PathBuilder()
+    .setStroke('green', false)
+    .setStrokeWidth(2, false)
+    .moveTo(-DECK_HALF_U, 0)
+    .lineTo( DECK_HALF_U, 0)
+
+local DockHoop20m = PathBuilder()
+    .setStroke('green', false)
+    .setStrokeWidth(2, false)
+    .setFillOpacity(0, false)
+    .moveTo(-(DECK_HALF_U*1.25), -(DECK_HALF_U*1.25))
+    .lineTo( (DECK_HALF_U*1.25), -(DECK_HALF_U*1.25))
+    .lineTo( (DECK_HALF_U*1.25),  (DECK_HALF_U*1.25))
+    .lineTo(-(DECK_HALF_U*1.25),  (DECK_HALF_U*1.25))
+    .closePath()
+
+local DockHoop40m = PathBuilder()
+    .setStroke('green', false)
+    .setStrokeWidth(2, false)
+    .setFillOpacity(0, false)
+    .moveTo(-(DECK_HALF_U*1.6), -(DECK_HALF_U*1.6))
+    .lineTo( (DECK_HALF_U*1.6), -(DECK_HALF_U*1.6))
+    .lineTo( (DECK_HALF_U*1.6),  (DECK_HALF_U*1.6))
+    .lineTo(-(DECK_HALF_U*1.6),  (DECK_HALF_U*1.6))
+    .closePath()
+
+local DockDeckObj = pDock.createCustomDraw(0,0,0.00012)
+DockDeckObj.usePathBuilder(DockDeckPath)
+DockDeckObj.setPositionIsRelative(true)
+DockDeckObj.setScale(DOCK_SCALE)
+DockDeckObj.build()
+
+local DockCenterlineObj = pDock.createCustomDraw(0,0,0.00013)
+DockCenterlineObj.usePathBuilder(DockCenterlinePath)
+DockCenterlineObj.setPositionIsRelative(true)
+DockCenterlineObj.setScale(DOCK_SCALE)
+DockCenterlineObj.build()
+
+local DockHoop20Obj = pDock.createCustomDraw(0,0,0.00014)
+DockHoop20Obj.usePathBuilder(DockHoop20m)
+DockHoop20Obj.setPositionIsRelative(true)
+DockHoop20Obj.setScale(DOCK_SCALE)
+DockHoop20Obj.build()
+
+local DockHoop40Obj = pDock.createCustomDraw(0,0,0.00015)
+DockHoop40Obj.usePathBuilder(DockHoop40m)
+DockHoop40Obj.setPositionIsRelative(true)
+DockHoop40Obj.setScale(DOCK_SCALE)
+DockHoop40Obj.build()
+
+-- Place hoops above deck along +Z (pad up) in local coordinates
+DockHoop20Obj.move(0, 0, 20/DOCK_SCALE)
+DockHoop40Obj.move(0, 0, 40/DOCK_SCALE)
+-- Hide until docking enabled
+if DockDeckObj.hideDraw then DockDeckObj.hideDraw() end
+if DockCenterlineObj.hideDraw then DockCenterlineObj.hideDraw() end
+if DockHoop20Obj.hideDraw then DockHoop20Obj.hideDraw() end
+if DockHoop40Obj.hideDraw then DockHoop40Obj.hideDraw() end
+
 StallOrb = pHud.createCustomDraw(0,0,0.0001)
 StallOrb.usePathBuilder(StallOrbPath)
 StallOrb.setPositionIsRelative(true)
@@ -329,6 +425,22 @@ DestSpaceMarkerObj.usePathBuilder(DestSpaceMarkerPath)
 DestSpaceMarkerObj.setPositionIsRelative(true)
 DestSpaceMarkerObj.setScale(1/600)
 DestSpaceMarkerObj.build()
+
+-- HUD docking marker (deck center direction)
+local DockHudMarkerPath = PathBuilder()
+    .setFill('green', false)
+    .setFillOpacity(1, false)
+    .moveTo( 0,  6)
+    .lineTo( 5, -4)
+    .lineTo(-5, -4)
+    .closePath()
+
+local DockHudMarkerObj = pHud.createCustomDraw(0,0,0.000133)
+DockHudMarkerObj.usePathBuilder(DockHudMarkerPath)
+DockHudMarkerObj.setPositionIsRelative(true)
+DockHudMarkerObj.setScale(1/600)
+DockHudMarkerObj.build()
+DockHudMarkerObj.hideDraw()
 
 DistIndicator = pHud.createText(0,0,0.000222)
 DistIndicator.setPositionIsRelative(true)
@@ -594,6 +706,108 @@ local function clamp(v, lo, hi)
     if v < lo then return lo end
     if v > hi then return hi end
     return v
+end
+
+-- Parse OLS JSON into vec3s; supports {"OLS1":[x,y,z], ...} or {"OLS1":{"x":..,"y":..,"z":..}, ...}
+local function parseOLSJson(s)
+    if type(s) ~= 'string' then return nil end
+    local ok, data = pcall(function() return json and json.decode(s) or nil end)
+    if not ok or type(data) ~= 'table' then return nil end
+    local function toVec(v)
+        if type(v) ~= 'table' then return nil end
+        if v.x and v.y and v.z then return vec3(v.x, v.y, v.z) end
+        if #v >= 3 then return vec3(v[1], v[2], v[3]) end
+        return nil
+    end
+    local v1 = toVec(data.OLS1)
+    local v2 = toVec(data.OLS2)
+    local v3 = toVec(data.OLS3)
+    if v1 and v2 and v3 then return v1, v2, v3 end
+    return nil
+end
+
+local function v3lerp(a, b, t)
+    return a + (b - a) * t
+end
+
+-- Update smoothed beacons and compute pad frame (origin at OLS3 deck center)
+local function updateDockFrame(now)
+    local hasAll = (__olsW.OLS1 and __olsW.OLS2 and __olsW.OLS3)
+    if not hasAll then __dockValid = false; return end
+
+    -- Smooth incoming positions
+    local alpha = 0.35
+    for k, v in pairs(__olsW) do
+        if v then
+            if not __olsS[k] then __olsS[k] = v else __olsS[k] = v3lerp(__olsS[k], v, alpha) end
+        end
+    end
+
+    local A = __olsS.OLS1
+    local B = __olsS.OLS2
+    local C = __olsS.OLS3
+    if not (A and B and C) then __dockValid = false; return end
+
+    local x = (A - B):normalize()
+    if not x or x:len() < 1e-6 then __dockValid = false; return end
+    -- Closest point on axis AB to C
+    local CB = C - B
+    local proj = x * (CB:dot(x))
+    local axisPoint = B + proj
+    local down = (C - axisPoint)
+    if down:len() < 1e-6 then __dockValid = false; return end
+    down = down:normalize()
+    local z = (-down):normalize() -- pad up
+    local y = (z:cross(x)):normalize()
+    z = (x:cross(y)):normalize()
+    local origin = C -- deck center
+
+    -- Deck velocity
+    local vel = __dockVel or vec3(0,0,0)
+    if __dockPrevOrigin and __dockLastT and now then
+        local dt = now - __dockLastT
+        if dt and dt > 0 then
+            vel = (origin - __dockPrevOrigin) / dt
+        end
+    end
+    __dockPrevOrigin = origin
+    __dockVel = vel
+    __dockLastT = now
+
+    __dock.origin, __dock.x, __dock.y, __dock.z = origin, x, y, z
+    __dockValid = true
+end
+
+-- Project a world position to HUD capture space; returns x,y in HUD units or nil
+local function projectWorldToHud(world)
+    if not world then return nil end
+    local eye = vec3(construct.getWorldPosition())
+    local toDest = world - eye
+    local forward = vec3(construct.getWorldForward())
+    local right   = vec3(construct.getWorldRight())
+    local up      = vec3(construct.getWorldUp())
+    local fx = toDest:dot(forward)
+    if fx <= 0 then return nil end
+    local scale = 1/600
+    local halfW = 160 * scale
+    local halfUp = 80 * scale
+    local halfDown = 70 * scale
+    local dPanel = 4.0 * (0.3 + (zoom or 0))
+    if not dPanel or dPanel < 1e-3 then dPanel = 1.0 end
+    local yawErrDeg = math.deg(math.atan(math.abs(toDest:dot(right)), fx))
+    local pitchDeg  = math.deg(math.atan(toDest:dot(up), fx))
+    local maxYawDeg = math.deg(math.atan(halfW, dPanel))
+    local maxPitchUpDeg = math.deg(math.atan(halfUp, dPanel))
+    local maxPitchDownDeg = math.deg(math.atan(halfDown, dPanel))
+    if (yawErrDeg <= maxYawDeg) and (pitchDeg <= maxPitchUpDeg) and (pitchDeg >= -maxPitchDownDeg) then
+        local t = dPanel / fx
+        local mx = (toDest:dot(right) * t) / scale
+        local my = (toDest:dot(up)    * t) / scale
+        mx = math.max(-160, math.min(160, mx))
+        my = math.max(-70,  math.min(80,  my))
+        return mx, my
+    end
+    return nil
 end
 
 -- Returns total fuel mass (kg) in atmospheric and space tanks without links
@@ -1075,6 +1289,28 @@ end
 system:onEvent('onInputText', function(self, text)
     if type(text) ~= 'string' then return end
 
+    -- Docking toggle and optional JSON feed
+    do
+        local trimmed = text:match('^%s*(.-)%s*$')
+        if trimmed and trimmed:lower() == 'dock' then
+            __dockActive = not __dockActive
+            __dockPingT = nil
+            if not __dockActive then
+                if DockHudMarkerObj and DockHudMarkerObj.hideDraw then DockHudMarkerObj.hideDraw() end
+            end
+            system.print(__dockActive and 'Docking mode: ON' or 'Docking mode: OFF')
+            return
+        end
+        -- Allow manual OLS JSON paste (for testing)
+        local a,b,c = parseOLSJson(text)
+        if a and b and c then
+            __olsW.OLS1, __olsW.OLS2, __olsW.OLS3 = a,b,c
+            updateDockFrame(system.getArkTime())
+            system.print('OLS beacons updated from input')
+            return
+        end
+    end
+
     -- 0) List saved valid waypoints
     do
         local trimmed = text:match('^%s*(.-)%s*$')
@@ -1224,6 +1460,26 @@ unit:onEvent('onStop', function (self)
     if switch then switch.deactivate() end
     unit.switchOffHeadlights()
 end )
+
+unit:onEvent('onStart', function(self)
+    -- Prepare receiver to listen to mothership OLS broadcasts
+    if rx then
+        pcall(function() if rx.setChannel then rx.setChannel(OLS_BCAST_CH) end end)
+        pcall(function() if rx.startListening then rx.startListening(OLS_BCAST_CH) end end)
+    end
+end)
+
+-- Listen for OLS beacon broadcasts from mothership
+if rx and rx.onEvent then
+    rx:onEvent('onReceived', function(self, channel, msg)
+        if channel == OLS_BCAST_CH then
+            local a,b,c = parseOLSJson(tostring(msg or ''))
+            if a and b and c then
+                __olsW.OLS1, __olsW.OLS2, __olsW.OLS3 = a,b,c
+            end
+        end
+    end)
+end
 
 system:onEvent('onFlush', function (self)
 
@@ -1563,6 +1819,53 @@ system:onEvent('onUpdate', function (self)
     local v = vec3(construct.getWorldVelocity())
     shipspeed = math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
     Nav:update()
+
+    -- Docking: ping mothership and update frame/visuals
+    do
+        local now = system.getArkTime()
+        if __dockActive and tx and tx.setChannel and tx.send then
+            if (not __dockPingT) or ((now - __dockPingT) > 1.0) then
+                pcall(function() tx.setChannel(OLS_REQ_CH) end)
+                pcall(function() tx.send("ping") end)
+                __dockPingT = now
+            end
+        end
+
+        -- auto stop docking when stopped
+        if __dockActive and shipspeed <= 0.5 then
+            __dockActive = false
+            if DockHudMarkerObj and DockHudMarkerObj.hideDraw then DockHudMarkerObj.hideDraw() end
+        end
+
+        -- Recompute dock frame from smoothed beacons
+        updateDockFrame(now)
+        if __dockActive and __dockValid and __dock.origin and __dock.x and __dock.y and __dock.z then
+            pcall(function()
+                DockObj.setPosition(__dock.origin.x, __dock.origin.y, __dock.origin.z)
+                DockObj.rotateXYZ({__dock.y.x,__dock.y.y,__dock.y.z}, {__dock.x.x,__dock.x.y,__dock.x.z}, {__dock.z.x,__dock.z.y,__dock.z.z})
+                if DockDeckObj and DockDeckObj.showDraw then DockDeckObj.showDraw() end
+                if DockCenterlineObj and DockCenterlineObj.showDraw then DockCenterlineObj.showDraw() end
+                if DockHoop20Obj and DockHoop20Obj.showDraw then DockHoop20Obj.showDraw() end
+                if DockHoop40Obj and DockHoop40Obj.showDraw then DockHoop40Obj.showDraw() end
+            end)
+
+            -- HUD marker for deck center (slightly above deck for visibility)
+            local markWorld = __dock.origin + __dock.z * 2
+            local mx,my = projectWorldToHud(markWorld)
+            if mx and my then
+                DockHudMarkerObj.move(mx, my, nil, true)
+                DockHudMarkerObj.showDraw()
+            else
+                DockHudMarkerObj.hideDraw()
+            end
+        else
+            if DockDeckObj and DockDeckObj.hideDraw then DockDeckObj.hideDraw() end
+            if DockCenterlineObj and DockCenterlineObj.hideDraw then DockCenterlineObj.hideDraw() end
+            if DockHoop20Obj and DockHoop20Obj.hideDraw then DockHoop20Obj.hideDraw() end
+            if DockHoop40Obj and DockHoop40Obj.hideDraw then DockHoop40Obj.hideDraw() end
+            if DockHudMarkerObj and DockHudMarkerObj.hideDraw then DockHudMarkerObj.hideDraw() end
+        end
+    end
 
     -- Update HUD
     -- local svg = ui.hud(stallScaled, headingScaled, speedScaled, altScaled, distKm))

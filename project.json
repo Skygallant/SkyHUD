@@ -2,7 +2,7 @@
   "cli": {
     "fmtVersion": 5
   },
-  "name": "SkyHUD",
+  "name": "Sky",
   "description": "An immersive fighter HUD for first person flying.",
   "sourcePath": "src",
   "outputPath": "out",
@@ -18,7 +18,7 @@
   ],
   "builds": [
     {
-      "name": "main",
+      "name": "HUD",
       "type": "control",
       "slots": [
         {
@@ -37,6 +37,47 @@
         {
           "name": "warp",
           "type": "warpDrive"
+        },
+        {
+          "name": "switch",
+          "type": "element"
+        },
+        {
+          "name": "rx",
+          "type": "receiver",
+          "events": [
+            "onReceived"
+          ]
+        },
+        {
+          "name": "tx",
+          "type": "emitter",
+          "events": [
+            "onSent"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Beacon",
+      "type": "control",
+      "slots": [
+        {
+          "name": "antenna",
+          "type": "emitter",
+          "events": []
+        },
+        {
+          "name": "OLS1",
+          "type": "element"
+        },
+        {
+          "name": "OLS2",
+          "type": "element"
+        },
+        {
+          "name": "OLS3",
+          "type": "element"
         }
       ]
     }

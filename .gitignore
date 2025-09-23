@@ -1,8 +1,10 @@
 libs/
 temp/
-out/
+out/custom/HUD.json
+out/custom/HUD.yaml
+out/custom/Beacon.conf
+out/custom/Beacon.yaml
 util/Codex.lua
-out
 util/
 node_modules/
 *.code-workspace
