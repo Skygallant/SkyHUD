@@ -70,7 +70,7 @@ Nav = Navigator.new(system, core, unit)
 Nav.axisCommandManager:setupCustomTargetSpeedRanges(axisCommandId.longitudinal, {1000, 5000, 10000, 20000, 30000})
 
 system.clearWaypoint(false)
-if switch then switch.activate() end
+if switch and switch.activate then switch.activate() end
 unit.switchOnHeadlights()
 
 -- Widgets and panels intentionally disabled
@@ -400,8 +400,9 @@ DockHoop40Obj.setScale(DOCK_SCALE)
 DockHoop40Obj.build()
 
 -- Place hoops above deck along +Z (pad up) in local coordinates
-DockHoop20Obj.move(0, 0, 20/DOCK_SCALE)
-DockHoop40Obj.move(0, 0, 40/DOCK_SCALE)
+-- For 3D offset along pad local Z, use setPosition (move() is 2D shape-point translation)
+DockHoop20Obj.setPosition(0, 0, 20)
+DockHoop40Obj.setPosition(0, 0, 40)
 -- Hide until docking enabled
 if DockDeckObj.hideDraw then DockDeckObj.hideDraw() end
 if DockCenterlineObj.hideDraw then DockCenterlineObj.hideDraw() end
@@ -1457,7 +1458,7 @@ end
 unit:onEvent('onStop', function (self)
     system.setWaypoint(system.getWaypointFromPlayerPos(),false)
     -- Widgets and panels intentionally disabled
-    if switch then switch.deactivate() end
+    if switch and switch.deactivate then switch.deactivate() end
     unit.switchOffHeadlights()
 end )
 
@@ -1932,10 +1933,10 @@ system:onEvent('onActionStart', function (self, action)
     elseif action == 'light' then
             if unit.isAnyHeadlightSwitchedOn() then
                 unit.switchOffHeadlights()
-                if switch then switch.deactivate() end
+                if switch and switch.deactivate then switch.deactivate() end
             else
                 unit.switchOnHeadlights()
-                if switch then switch.activate() end
+                if switch and switch.activate then switch.activate() end
             end
         
     elseif action == 'left' then
