@@ -49,8 +49,9 @@ local __lastSpaceEcoKgMin = 0
 local FUEL_SMOOTH_WINDOW_S = 2   -- seconds to average realtime rate
 local FUEL_ZERO_DELAY_S    = 20  -- seconds idle before showing zero
 local k = 0.5522847498307936
-local sustenationSpeed = 474 --export The sustentation speed (in km/h) of the construct as stated in build mode.
-local bingoFuel = 500 --export The mass of fuel (in kg) that would be deemed sufficient to return to base with.
+local sustenationSpeed = 500 --export The sustentation speed (in km/h) of the construct as stated in build mode.
+local bingoFuel = 1344 --export The mass of fuel (in kg) that would be deemed sufficient to return to base with.
+local ExtraSpaceTankId = 0 --export The Id of the extra tank that is used for vertical boosters (if it exists).
 
 -- Docking OLS (Optical Landing System) integration
 local OLS_REQ_CH = 42051194   -- Snub -> Mothership ping channel
@@ -814,6 +815,7 @@ end
 -- Returns total fuel mass (kg) in atmospheric and space tanks without links
 local function getFuelMassTotals()
     local atmoKg, spaceKg = 0, 0
+    local excludeId = tonumber(ExtraSpaceTankId) or 0
     local ids = core.getElementIdList() or {}
     for _, id in ipairs(ids) do
         local element = core.getElementItemIdById(id)
@@ -825,7 +827,11 @@ local function getFuelMassTotals()
             if item.name:find("Atmo", 1, true) then
                 atmoKg = atmoKg + fuel
             elseif item.name:find("Space", 1, true) then
-                spaceKg = spaceKg + fuel
+                if excludeId ~= 0 and id == excludeId then
+                    -- exclude this space tank from totals
+                else
+                    spaceKg = spaceKg + fuel
+                end
             end
         end
     end
