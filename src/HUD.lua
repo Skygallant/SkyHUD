@@ -25,19 +25,17 @@ local space_mass = 0
 local space_s_remain = 0
 local tele_sysId, tele_bodyId, tele_lat, tele_lon, tele_alt = 0, nil, 0, 0, 0
 local tele_name, tele_posStr = "",""
-local enviro = true
+local enviro = false
+local mmode = false
 local change_enviro = true
+local change_mmode = true
 -- Auto Pilot
 local autoAlign = false
 local autoBrake = false
--- Auto Orbit state
-local autoOrbit = false
-local autoOrbitState = 'idle'
-local autoOrbitActivatedT = 0
-local autoOrbitBodyInfo = nil
-local autoOrbitTargetAlt = 6000
-local autoOrbitTargetSpeed = 0
-local autoOrbitLastThrottleAdjustT = 0
+-- Auto Stable state
+local autoStable = false
+local autoStableBody = nil
+local autoStableAddition = 1100
 -- Auto-align smoothing state
 local __alignYawCmd = 0
 local __alignPitchCmd = 0
@@ -57,8 +55,8 @@ local __lastSpaceEcoKgMin = 0
 local FUEL_SMOOTH_WINDOW_S = 2   -- seconds to average realtime rate
 local FUEL_ZERO_DELAY_S    = 20  -- seconds idle before showing zero
 local k = 0.5522847498307936
-local sustenationSpeed = 500 --export The sustentation speed (in km/h) of the construct as stated in build mode.
-local bingoFuel = 1344 --export The mass of fuel (in kg) that would be deemed sufficient to return to base with.
+local sustenationSpeed = 57 --export The sustentation speed (in km/h) of the construct as stated in build mode.
+local bingoFuel = 672 --export The mass of fuel (in kg) that would be deemed sufficient to return to base with.
 local ExtraSpaceTankId = 0 --export The Id of the extra tank that is used for vertical boosters (if it exists).
 
 -- Docking OLS (Optical Landing System) integration
@@ -76,7 +74,7 @@ local __dockPingT = nil
 local __dockHudEnabled = true -- toggle if needed later
 
 Nav = Navigator.new(system, core, unit)
-Nav.axisCommandManager:setupCustomTargetSpeedRanges(axisCommandId.longitudinal, {1000, 5000, 10000, 20000, 30000})
+Nav.axisCommandManager:setupCustomTargetSpeedRanges(axisCommandId.longitudinal, {construct.getMaxSpeed()})
 
 system.clearWaypoint(false)
 if switch and switch.activate then switch.activate() end
@@ -533,6 +531,17 @@ ThrottleBar.setPositionIsRelative(true)
 ThrottleBar.setScale(1/600)
 ThrottleBar.build()
 
+ThrottleTarget = pHud.createText(0,0,0.000121)
+ThrottleTarget.setPositionIsRelative(true)
+ThrottleTarget.setFontColor('green')
+ThrottleTarget.setFontSize(6)
+ThrottleTarget.move(175, -60)
+ThrottleTarget.setAlignmentX('start')
+ThrottleTarget.setAlignmentY('middle')
+ThrottleTarget.setText('555')
+ThrottleTarget.setWeight(0.002)
+ThrottleTarget.setScale(1/600)
+
 AnnounceFuelAtmoPath = PathBuilder()
     .setFill('green', false)
     .setFillOpacity(1, false)
@@ -910,6 +919,7 @@ local function getNearestBodyName(systemId, worldPos)
     end
     return bestName
 end
+
 local function getNearestBodyInfo(worldPos)
     if not worldPos then return nil end
     local bestDist = math.huge
@@ -942,19 +952,9 @@ end
 local function computeCircularOrbitSpeed(body, altitude)
     if not body then return nil end
     local GM = tonumber(body.GM) or 0
-    local baseRadius = (tonumber(body.radius) or 0) + (altitude or 0)
-    if GM <= 0 or baseRadius <= 0 then return nil end
-
-local function computeCircularOrbitSpeedLocal(centerVec, radius, altitude)
-    local gvec = vec3(core.getWorldGravity())
-    local g = gvec:len() or 0
-    local r = (tonumber(radius) or 0) + (altitude or 0)
-    if g > 0 and r > 0 then
-        return math.sqrt(g * r)
-    end
-    return nil
-end
-    return math.sqrt(GM / baseRadius)
+    local r = (tonumber(body.radius) or 0) + (altitude or 0)
+    if GM <= 0 or r <= 0 then return nil end
+    return math.sqrt(GM / r) -- m/s
 end
 
 -- Return true if a world position is outside all atmospheres in the current dest system
@@ -1017,6 +1017,9 @@ local function updateHud()
     local prev_enviro = enviro 
     enviro = ((unit.getAtmosphereDensity() or 0) > 0)
     if prev_enviro ~= enviro then change_enviro = true end
+    local prev_mmode = mmode
+    mmode = Nav.axisCommandManager:getAxisCommandType(axisCommandId.longitudinal) == axisCommandType.byThrottle
+    if prev_mmode ~= mmode then change_mmode = true end
     if distKm == 0 then DistIndicator.setText('555')
     elseif distKm > 200 then DistIndicator.setText(string.format("%.0f su",math.ceil(distKm / 200)))
     else DistIndicator.setText(string.format("%.0f",distKm)) end
@@ -1277,7 +1280,7 @@ local function updateHud()
     end
 
 
-
+    if not mmode then ThrottleTarget.setText(string.format("%.0f",unit.getAxisCommandValue(0))) end
 
 
     local r = stallScaled
@@ -1301,7 +1304,7 @@ local function updateHud()
         .lineTo( 175, throttleScaled)
     
     applyPath(StallOrb, StallOrbPath)
-    applyPath(ThrottleBar, ThrottleBarPath)
+    if mmode then applyPath(ThrottleBar, ThrottleBarPath) end
 
     if change_enviro then
         if enviro then
@@ -1316,7 +1319,6 @@ local function updateHud()
             LadderLObj.showDraw()
             LadderRObj.showDraw()
             TickerObj.showDraw()
-            ThrottleBar.showDraw()
             StallOrb.showDraw()
         else
             CaptureBoxObj.showDraw()
@@ -1330,12 +1332,22 @@ local function updateHud()
             LadderLObj.hideDraw()
             LadderRObj.hideDraw()
             TickerObj.hideDraw()
-            ThrottleBar.showDraw()
             StallOrb.showDraw()
         end
     end
-            
+    
+    if change_mmode then
+        if mmode then
+            ThrottleBar.showDraw()
+            ThrottleTarget.hideDraw()
+        else
+            ThrottleBar.hideDraw()
+            ThrottleTarget.showDraw()
+        end
+    end
+
     change_enviro = false
+    change_mmode = false
 end
 
 -- Parse ::pos{system, body, latDeg, lonDeg, altM}
@@ -1586,127 +1598,50 @@ system:onEvent('onFlush', function (self)
     local currentRollDeg = getRoll(worldVertical, constructForward, constructRight)
     local currentRollDegAbs = math.abs(currentRollDeg)
     local currentRollDegSign = utils.sign(currentRollDeg)
-    -- Auto-orbit guidance when engaged
-    if autoOrbit then
-        local now = system.getArkTime()
-        local disableReason
-
-        if not autoOrbitBodyInfo or not autoOrbitBodyInfo.body then
-            autoOrbitBodyInfo = getNearestBodyInfo(vec3(construct.getWorldPosition()))
-            if autoOrbitBodyInfo and autoOrbitBodyInfo.body then
-                autoOrbitTargetSpeed = computeCircularOrbitSpeed(autoOrbitBodyInfo.body, autoOrbitTargetAlt) or 0
-                if autoOrbitTargetSpeed <= 0 then
-                    autoOrbit = false
-                    autoOrbitState = 'idle'
-                    autoOrbitBodyInfo = nil
-                    autoOrbitTargetSpeed = 0
-                    autoOrbitLastThrottleAdjustT = 0
-                    system.print('Auto-orbit disengaged: invalid orbital parameters.')
-                else
-                    autoOrbitActivatedT = now
-                    autoAlign = false
-                    autoBrake = false
-                    local bodyName = autoOrbitBodyInfo.body.name and autoOrbitBodyInfo.body.name[1] or 'body'
-                    system.print(string.format('Auto-orbit: climbing to %dm around %s.', autoOrbitTargetAlt, bodyName))
-                end
-            else
-                autoOrbit = false
-                autoOrbitState = 'idle'
-                autoOrbitBodyInfo = nil
-                autoOrbitTargetSpeed = 0
-                autoOrbitLastThrottleAdjustT = 0
-                system.print('Auto-orbit disengaged: unable to identify nearby celestial body.')
-            end
-        end
-
-        if autoOrbit and autoOrbitTargetSpeed > 0 then
-            local bodyInfo = autoOrbitBodyInfo
-            if autoOrbitState == 'idle' then
-                autoOrbitState = 'ascent'
-            end
-
+    -- Auto-stable guidance when engaged
+    if autoStable then
+        -- Choose a robust 'up' (radial) direction: prefer body center if known, else use gravity
+        local upWorld
+        do
             local pos = vec3(construct.getWorldPosition())
-            local center = bodyInfo.center or vec3(0, 0, 0)
-            local radialVec = v3sub(pos, center)
-            local radialDist = radialVec:len()
-            local radialDir = constructUp
-            if radialDist > 1e-6 then
-                radialDir = radialVec / radialDist
+            local ctbl = autoStableBody and autoStableBody.center
+            if ctbl and type(ctbl[1]) == 'number' then
+                local center = vec3(ctbl[1], ctbl[2], ctbl[3])
+                local radial = pos - center
+                if radial:len() > 1e-6 then upWorld = radial:normalize() end
             end
-            local altitude = radialDist - (bodyInfo.radius or 0)
-            local verticalVel = constructVelocity:dot(radialDir)
-            local horizontalVelVec = constructVelocity - radialDir * verticalVel
-            local horizontalSpeed = horizontalVelVec:len()
-
-            if autoOrbitState == 'ascent' and altitude >= autoOrbitTargetAlt - 50 and math.abs(verticalVel) < 2 then
-                autoOrbitState = 'circularize'
-                system.print('Auto-orbit: circularizing at target altitude.')
-            end
-
-            local upWorld = worldVertical:len() > 0.01 and (-worldVertical):normalize() or constructUp
-            local pitchDot = clamp(constructForward:dot(upWorld), -1, 1)
-            local currentPitchDeg = math.deg(math.asin(pitchDot))
-
-            local altFrac = clamp((altitude or 0) / autoOrbitTargetAlt, 0, 1)
-            local targetPitchDeg
-            if autoOrbitState == 'ascent' then
-                targetPitchDeg = clamp(60 * (1 - altFrac) + 5, 5, 40)
-            else
-                local altError = autoOrbitTargetAlt - (altitude or 0)
-                targetPitchDeg = clamp(altError * 0.02, -5, 15)
-            end
-
-            local pitchError = targetPitchDeg - currentPitchDeg
-            finalPitchInput = clamp(pitchError * 0.05, -1, 1)
-            finalRollInput = clamp(-currentRollDeg * 0.02, -1, 1)
-            finalYawInput = 0
-
-            local desiredSpeed = autoOrbitTargetSpeed
-            if autoOrbitState == 'ascent' then
-                local ramp = math.max(altFrac, 0.1)
-                desiredSpeed = clamp(autoOrbitTargetSpeed * math.max(0.3, math.sqrt(ramp)), 30, autoOrbitTargetSpeed)
-            end
-
-            local cmdType = Nav.axisCommandManager:getAxisCommandType(axisCommandId.longitudinal)
-            if cmdType == axisCommandType.byTargetSpeed then
-                if (now - autoOrbitLastThrottleAdjustT) > 0.1 then
-                    Nav.axisCommandManager:setTargetSpeedCommand(axisCommandId.longitudinal, desiredSpeed)
-                    autoOrbitLastThrottleAdjustT = now
-                end
-            elseif cmdType == axisCommandType.byThrottle then
-                local desiredThrottle = clamp(desiredSpeed / math.max(autoOrbitTargetSpeed, 1), 0, 1)
-                if (now - autoOrbitLastThrottleAdjustT) > 0.1 then
-                    Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, desiredThrottle)
-                    autoOrbitLastThrottleAdjustT = now
-                end
-            end
-
-            finalBrakeInput = 0
-            if autoOrbitState == 'circularize' and autoOrbitTargetSpeed > 0 then
-                local overspeed = horizontalSpeed - autoOrbitTargetSpeed
-                if overspeed > autoOrbitTargetSpeed * 0.05 then
-                    finalBrakeInput = clamp(overspeed / autoOrbitTargetSpeed, 0, 1)
-                else
-                    local altErr = math.abs((altitude or 0) - autoOrbitTargetAlt)
-                    local vErr  = math.abs(verticalVel or 0)
-                    local hErr  = math.abs(horizontalSpeed - autoOrbitTargetSpeed)
-                    if altErr < 25 and vErr < 0.5 and hErr <= math.max(1.0, autoOrbitTargetSpeed * 0.02) then
-                        autoOrbit = false
-                        autoOrbitState = 'idle'
-                        autoOrbitBodyInfo = nil
-                        autoOrbitLastThrottleAdjustT = now
-                        brakeInput = 0
-                        system.print('Auto-orbit complete: circularization achieved.')
-                    end
-                end
+            if not upWorld then
+                local g = vec3(core.getWorldGravity())
+                if g:len() > 1e-6 then upWorld = (-g):normalize() else upWorld = vec3(construct.getWorldOrientationUp()) end
             end
         end
-    else
-        autoOrbitState = 'idle'
-        autoOrbitTargetSpeed = 0
-        autoOrbitBodyInfo = nil
-        autoOrbitLastThrottleAdjustT = 0
+
+        -- Measure current pitch relative to the horizon (0° = level)
+        local fwd = vec3(construct.getWorldOrientationForward())
+        local pitchCos = clamp(fwd:dot(upWorld), -1, 1)
+        local currentPitchDeg = math.deg(math.asin(pitchCos))  -- +up = nose above horizon
+
+        -- Drive pitch toward 0° (level)
+        local targetPitchDeg = 0
+        local err = targetPitchDeg - currentPitchDeg
+
+        -- Proportional control (tune Kp 0.03..0.08 to taste)
+        local Kp = 0.05
+        local cmd = clamp(err * Kp, -1, 1)
+
+        -- Small deadzone and minimum command to avoid dithering
+        local dead = 0.1
+        local minCmd = 0.05
+        if math.abs(err) < dead then
+            cmd = 0
+        elseif math.abs(cmd) < minCmd then
+            cmd = (cmd > 0) and minCmd or -minCmd
+        end
+
+        -- Apply override on pitch only (do not touch roll/yaw)
+        finalPitchInput = cmd
     end
+
 
     -- Auto-align: override yaw/pitch to point nose at __destPos (do not override roll)
     do
@@ -1999,6 +1934,15 @@ system:onEvent('onUpdate', function (self)
     shipspeed = math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
     Nav:update()
 
+    if enviro then
+        Nav.axisCommandManager:setupCustomTargetSpeedRanges(axisCommandId.longitudinal, {1250})
+    elseif autoStable then
+        local autoStableSpeed = computeCircularOrbitSpeed(autoStableBody, autoStableBody.atmosphereThickness + autoStableAddition)
+        Nav.axisCommandManager:setupCustomTargetSpeedRanges(axisCommandId.longitudinal, {autoStableSpeed*3.6})
+    else
+        Nav.axisCommandManager:setupCustomTargetSpeedRanges(axisCommandId.longitudinal, {construct.getMaxSpeed()*3.6})
+    end
+
     -- Docking: ping mothership and update frame/visuals
     do
         local now = system.getArkTime()
@@ -2150,35 +2094,11 @@ system:onEvent('onActionStart', function (self, action)
     elseif action == 'option2' and __destPos and not enviro then
         autoAlign = not autoAlign
     elseif action == 'option3' then
-        if autoOrbit then
-            autoOrbit = false
-            autoOrbitState = 'idle'
-            autoOrbitBodyInfo = nil
-            autoOrbitTargetSpeed = 0
-            autoOrbitLastThrottleAdjustT = 0
-            autoOrbitActivatedT = 0
-            system.print('Auto-orbit disengaged.')
+        autoStableBody = getNearestBodyInfo(vec3(construct.getWorldPosition())).body
+        if autoStableBody then
+            autoStable = not autoStable
         else
-            if gearExtended then
-                system.print('Auto-orbit requires landing gear to be retracted.')
-            else
-                autoOrbit = true
-                autoOrbitState = 'ascent'
-                autoOrbitBodyInfo = nil
-                autoOrbitTargetSpeed = 0
-                autoOrbitLastThrottleAdjustT = 0
-                autoOrbitActivatedT = system.getArkTime()
-                autoAlign = false
-                autoBrake = false
-                brakeInput = 0
-                system.print('Auto-orbit engaged. Climbing to 6000 m.')
-                local __cmd = Nav.axisCommandManager:getAxisCommandType(axisCommandId.longitudinal)
-                if __cmd == axisCommandType.byTargetSpeed then
-                    Nav.axisCommandManager:setTargetSpeedCommand(axisCommandId.longitudinal, 500)
-                elseif __cmd == axisCommandType.byThrottle then
-                    Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 1)
-                end
-            end
+            autoStable = false
         end
     end
 end)
@@ -2232,3 +2152,4 @@ system:onEvent('onActionLoop', function (self, action)
     end
 end)
 system.print("PRIMED")
+
