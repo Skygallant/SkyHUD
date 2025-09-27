@@ -6,5 +6,7 @@ out/custom/Beacon.conf
 out/custom/Beacon.yaml
 util/Codex.lua
 util/
+tools/
 node_modules/
 *.code-workspace
+package*

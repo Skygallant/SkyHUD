@@ -1,5 +1,14 @@
-{
-  "dependencies": {
-    "luaparse": "^0.3.1"
+﻿{
+  "name": "skyhud-dev-tools",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "luaparse:check": "node tools/parse-lua.cjs src/HUD.lua",
+    "luaparse:check:file": "node tools/parse-lua.cjs"
+  },
+  "devDependencies": {
+    "luaparse": "^0.3.0"
   }
 }
+
