@@ -1292,7 +1292,7 @@ local function updateHud()
         .cubicCurve(cx + k*r, cy - r, cx + r, cy - k*r, cx + r, cy)
         .closePath()
 
-    throttleScaled = -55 + (clamp(unit.getThrottle(),0,100) / 100) * 100
+    throttleScaled = -55 + (clamp(unit.getAxisCommandValue(0),0,1)) * 100
     
     ThrottleBarPath = PathBuilder()
         .setStroke('green', false)
@@ -1511,7 +1511,6 @@ if shipspeed <= 10 then
     gearExtended = true
     Nav.axisCommandManager:setTargetGroundAltitude(0)
     Nav.axisCommandManager:resetCommand(axisCommandId.longitudinal)
-    unit.setAxisCommandValue(axisCommandId.longitudinal,0)
 else
     gearExtended = false
     Nav.axisCommandManager:setTargetGroundAltitude(200)
@@ -1670,23 +1669,14 @@ system:onEvent('onFlush', function (self)
 
             local cmdType = Nav.axisCommandManager:getAxisCommandType(axisCommandId.longitudinal)
             if cmdType == axisCommandType.byTargetSpeed then
-                local currentTarget = Nav.axisCommandManager:getTargetSpeed(axisCommandId.longitudinal) or 0
-                local diff = desiredSpeed - currentTarget
-                if math.abs(diff) > 0.5 and (now - autoOrbitLastThrottleAdjustT) > 0.1 then
-                    local step = clamp(diff, 0, 100)
-                    if math.abs(step) < 0.5 then
-                        step = utils.sign(diff) * 0.5
-                    end
-                    Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, step)
+                if (now - autoOrbitLastThrottleAdjustT) > 0.1 then
+                    Nav.axisCommandManager:setTargetSpeedCommand(axisCommandId.longitudinal, desiredSpeed)
                     autoOrbitLastThrottleAdjustT = now
                 end
             elseif cmdType == axisCommandType.byThrottle then
-                local throttle = unit.getThrottle() or 0
                 local desiredThrottle = clamp(desiredSpeed / math.max(autoOrbitTargetSpeed, 1), 0, 1)
-                local diff = desiredThrottle - throttle
-                if math.abs(diff) > 0.01 and (now - autoOrbitLastThrottleAdjustT) > 0.1 then
-                    local step = clamp(diff * 0.5, -1, 1)
-                    Nav.axisCommandManager:updateCommandFromActionLoop(axisCommandId.longitudinal, step)
+                if (now - autoOrbitLastThrottleAdjustT) > 0.1 then
+                    Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, desiredThrottle)
                     autoOrbitLastThrottleAdjustT = now
                 end
             end
@@ -1696,6 +1686,18 @@ system:onEvent('onFlush', function (self)
                 local overspeed = horizontalSpeed - autoOrbitTargetSpeed
                 if overspeed > autoOrbitTargetSpeed * 0.05 then
                     finalBrakeInput = clamp(overspeed / autoOrbitTargetSpeed, 0, 1)
+                else
+                    local altErr = math.abs((altitude or 0) - autoOrbitTargetAlt)
+                    local vErr  = math.abs(verticalVel or 0)
+                    local hErr  = math.abs(horizontalSpeed - autoOrbitTargetSpeed)
+                    if altErr < 25 and vErr < 0.5 and hErr <= math.max(1.0, autoOrbitTargetSpeed * 0.02) then
+                        autoOrbit = false
+                        autoOrbitState = 'idle'
+                        autoOrbitBodyInfo = nil
+                        autoOrbitLastThrottleAdjustT = now
+                        brakeInput = 0
+                        system.print('Auto-orbit complete: circularization achieved.')
+                    end
                 end
             end
         end
@@ -2087,7 +2089,6 @@ system:onEvent('onActionStart', function (self, action)
                 unit.deployLandingGears()
                 Nav.axisCommandManager:setTargetGroundAltitude(0)
                 Nav.axisCommandManager:resetCommand(axisCommandId.longitudinal)
-                unit.setAxisCommandValue(axisCommandId.longitudinal,0)
             else
                 unit.retractLandingGears()
                 Nav.axisCommandManager:setTargetGroundAltitude(200)
@@ -2148,7 +2149,7 @@ system:onEvent('onActionStart', function (self, action)
         autoBrake = not autoBrake
     elseif action == 'option2' and __destPos and not enviro then
         autoAlign = not autoAlign
-    elseif action == 'option3' and enviro then
+    elseif action == 'option3' then
         if autoOrbit then
             autoOrbit = false
             autoOrbitState = 'idle'
@@ -2173,9 +2174,9 @@ system:onEvent('onActionStart', function (self, action)
                 system.print('Auto-orbit engaged. Climbing to 6000 m.')
                 local __cmd = Nav.axisCommandManager:getAxisCommandType(axisCommandId.longitudinal)
                 if __cmd == axisCommandType.byTargetSpeed then
-                    Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, 10.0)
+                    Nav.axisCommandManager:setTargetSpeedCommand(axisCommandId.longitudinal, 500)
                 elseif __cmd == axisCommandType.byThrottle then
-                    Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, 0.2)
+                    Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 1)
                 end
             end
         end
