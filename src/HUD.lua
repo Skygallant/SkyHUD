@@ -33,9 +33,8 @@ local change_mmode = true
 local autoAlign = false
 local autoBrake = false
 -- Auto Stable state
-local autoStable = false
+local autoStableAddition = 1500
 local autoStableBody = nil
-local autoStableAddition = 1100
 -- Auto-align smoothing state
 local __alignYawCmd = 0
 local __alignPitchCmd = 0
@@ -74,7 +73,7 @@ local __dockPingT = nil
 local __dockHudEnabled = true -- toggle if needed later
 
 Nav = Navigator.new(system, core, unit)
-Nav.axisCommandManager:setupCustomTargetSpeedRanges(axisCommandId.longitudinal, {construct.getMaxSpeed()})
+Nav.axisCommandManager:setupCustomTargetSpeedRanges(axisCommandId.longitudinal, {construct.getMaxSpeed()*3.6})
 
 system.clearWaypoint(false)
 if switch and switch.activate then switch.activate() end
@@ -957,6 +956,34 @@ local function computeCircularOrbitSpeed(body, altitude)
     return math.sqrt(GM / r) -- m/s
 end
 
+-- Distance in meters from a world position to the nearest body's atmosphere shell.
+-- If no bodies with atmosphere exist in the atlas, returns nil.
+-- When inside an atmosphere, returns 0.
+local function distanceToNearestAtmosphere(worldPos)
+    local pos = worldPos or vec3(construct.getWorldPosition())
+    if not pos then return nil end
+    local bestGap = math.huge
+    for _, sys in pairs(atlas) do
+        if type(sys) == 'table' then
+            for _, body in pairs(sys) do
+                if type(body) == 'table' and body.center and body.hasAtmosphere and body.atmosphereRadius then
+                    local c = vec3(body.center[1] or 0, body.center[2] or 0, body.center[3] or 0)
+                    local d = v3sub(pos, c):len()
+                    local R = tonumber(body.atmosphereRadius) or 0
+                    if R > 0 and d ~= d then
+                        -- NaN guard; skip
+                    else
+                        local gap = math.max(0, d - R)
+                        if gap < bestGap then bestGap = gap end
+                    end
+                end
+            end
+        end
+    end
+    if bestGap == math.huge then return nil end
+    return bestGap
+end
+
 -- Return true if a world position is outside all atmospheres in the current dest system
 local function isWorldInSpace(systemId, worldPos)
     local sys = atlas[systemId]
@@ -1280,7 +1307,6 @@ local function updateHud()
     end
 
 
-    if not mmode then ThrottleTarget.setText(string.format("%.0f",unit.getAxisCommandValue(0))) end
 
 
     local r = stallScaled
@@ -1582,44 +1608,48 @@ system:onEvent('onFlush', function (self)
     autoRollFactor = math.max(autoRollFactor, 0.01)
     turnAssistFactor = math.max(turnAssistFactor, 0.01)
 
+    -- Auto-stable guidance when engaged
+    -- Choose a robust 'up' (radial) direction: prefer body center if known, else use gravity
+    local upWorld
+    do
+        local pos = vec3(construct.getWorldPosition())
+        local ctbl = autoStableBody and autoStableBody.center
+        if ctbl and type(ctbl[1]) == 'number' then
+            local center = vec3(ctbl[1], ctbl[2], ctbl[3])
+            local radial = pos - center
+            if radial:len() > 1e-6 then upWorld = radial:normalize() end
+        end
+        if not upWorld then
+            local g = vec3(core.getWorldGravity())
+            if g:len() > 1e-6 then upWorld = (-g):normalize() else upWorld = vec3(construct.getWorldOrientationUp()) end
+        end
+    end
+
+    -- Measure current pitch relative to the horizon (0° = level)
+    local fwd = vec3(construct.getWorldOrientationForward())
+    local pitchCos = clamp(fwd:dot(upWorld), -1, 1)
+    local currentPitchDeg = math.deg(math.asin(pitchCos))  -- +up = nose above horizon
+
+    local vel = vec3(construct.getWorldVelocity())
+    local vlen = vel:len()
+    local velDir = vel / vlen
+    local fwd   = vec3(construct.getWorldOrientationForward())
+    local right = vec3(construct.getWorldOrientationRight())
+
+    -- Pitch/Yaw toward prograde
+    local targetPitchDeg = math.deg(math.asin(clamp(velDir:dot(upWorld), -1, 1)))
+    local err = targetPitchDeg - currentPitchDeg
+    local x = velDir:dot(fwd)
+    local yYaw = velDir:dot(right)
+    local yawDeg = math.deg(math.atan(yYaw, x))
+
     -- final inputs
     local finalPitchInput = pitchInput + system.getControlDeviceForwardInput()
     local finalRollInput = rollInput + system.getControlDeviceYawInput()
     local finalYawInput = yawInput - system.getControlDeviceLeftRightInput()
     local finalBrakeInput = brakeInput
 
-    -- Axis
-    local worldVertical = vec3(core.getWorldVertical()) -- along gravity
-    local constructUp = vec3(construct.getWorldOrientationUp())
-    local constructForward = vec3(construct.getWorldOrientationForward())
-    local constructRight = vec3(construct.getWorldOrientationRight())
-    constructVelocity = vec3(construct.getWorldVelocity())
-    local constructVelocityDir = vec3(construct.getWorldVelocity()):normalize()
-    local currentRollDeg = getRoll(worldVertical, constructForward, constructRight)
-    local currentRollDegAbs = math.abs(currentRollDeg)
-    local currentRollDegSign = utils.sign(currentRollDeg)
-    -- Auto-stable guidance when engaged
-    if autoStable then
-        -- Choose a robust 'up' (radial) direction: prefer body center if known, else use gravity
-        local upWorld
-        do
-            local pos = vec3(construct.getWorldPosition())
-            local ctbl = autoStableBody and autoStableBody.center
-            if ctbl and type(ctbl[1]) == 'number' then
-                local center = vec3(ctbl[1], ctbl[2], ctbl[3])
-                local radial = pos - center
-                if radial:len() > 1e-6 then upWorld = radial:normalize() end
-            end
-            if not upWorld then
-                local g = vec3(core.getWorldGravity())
-                if g:len() > 1e-6 then upWorld = (-g):normalize() else upWorld = vec3(construct.getWorldOrientationUp()) end
-            end
-        end
-
-        -- Measure current pitch relative to the horizon (0° = level)
-        local fwd = vec3(construct.getWorldOrientationForward())
-        local pitchCos = clamp(fwd:dot(upWorld), -1, 1)
-        local currentPitchDeg = math.deg(math.asin(pitchCos))  -- +up = nose above horizon
+    if autoStableBody and (currentPitchDeg <=1.5 and currentPitchDeg >= -1.5) and enviro and pitchInput == 0 then
 
         -- Drive pitch toward 0° (level)
         local targetPitchDeg = 0
@@ -1627,7 +1657,7 @@ system:onEvent('onFlush', function (self)
 
         -- Proportional control (tune Kp 0.03..0.08 to taste)
         local Kp = 0.05
-        local cmd = clamp(err * Kp, -1, 1)
+        local cmd = clamp(err * Kp, -0.25, 0.25)
 
         -- Small deadzone and minimum command to avoid dithering
         local dead = 0.1
@@ -1639,9 +1669,44 @@ system:onEvent('onFlush', function (self)
         end
 
         -- Apply override on pitch only (do not touch roll/yaw)
+        finalPitchInput =  cmd
+    elseif autoStableBody and (not enviro) and pitchInput == 0 and ((currentPitchDeg <=1.5 and currentPitchDeg >= -1.5) or (yawDeg <=1.5 and yawDeg >= -1.5)) then
+        -- In space: drive pitch and yaw toward prograde (velocity direction)
+
+        local Kp = 0.05
+        local cmd = clamp(err * Kp, -0.25, 0.25)
+
+        local dead = 0.1
+        local minCmd = 0.05
+        if math.abs(err) < dead then
+            cmd = 0
+        elseif math.abs(cmd) < minCmd then
+            cmd = (cmd > 0) and minCmd or -minCmd
+        end
+
         finalPitchInput = cmd
+
+        -- Yaw toward prograde
+        local Ky = 0.05
+        local yawCmd = clamp(-Ky * yawDeg, -0.25, 0.25)
+        if math.abs(yawDeg) < dead then
+            yawCmd = 0
+        elseif math.abs(yawCmd) < minCmd then
+            yawCmd = (yawCmd > 0) and minCmd or -minCmd
+        end
+        finalYawInput = yawCmd
     end
 
+    -- Axis
+    local worldVertical = vec3(core.getWorldVertical()) -- along gravity
+    local constructUp = vec3(construct.getWorldOrientationUp())
+    local constructForward = vec3(construct.getWorldOrientationForward())
+    local constructRight = vec3(construct.getWorldOrientationRight())
+    constructVelocity = vec3(construct.getWorldVelocity())
+    local constructVelocityDir = vec3(construct.getWorldVelocity()):normalize()
+    local currentRollDeg = getRoll(worldVertical, constructForward, constructRight)
+    local currentRollDegAbs = math.abs(currentRollDeg)
+    local currentRollDegSign = utils.sign(currentRollDeg)
 
     -- Auto-align: override yaw/pitch to point nose at __destPos (do not override roll)
     do
@@ -1934,13 +1999,22 @@ system:onEvent('onUpdate', function (self)
     shipspeed = math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
     Nav:update()
 
-    if enviro then
-        Nav.axisCommandManager:setupCustomTargetSpeedRanges(axisCommandId.longitudinal, {1250})
-    elseif autoStable then
-        local autoStableSpeed = computeCircularOrbitSpeed(autoStableBody, autoStableBody.atmosphereThickness + autoStableAddition)
-        Nav.axisCommandManager:setupCustomTargetSpeedRanges(axisCommandId.longitudinal, {autoStableSpeed*3.6})
-    else
-        Nav.axisCommandManager:setupCustomTargetSpeedRanges(axisCommandId.longitudinal, {construct.getMaxSpeed()*3.6})
+    autoStableBody = getNearestBodyInfo(vec3(construct.getWorldPosition())).body
+    local autoStableSpeed = computeCircularOrbitSpeed(autoStableBody, autoStableBody.atmosphereThickness + autoStableAddition)
+    local autoStableDistance = distanceToNearestAtmosphere() < (10 * 1000)
+    local autoStableDensity = unit.getAtmosphereDensity() >= 0.05
+
+    if not mmode then
+        if autoStableDensity then
+            Nav.axisCommandManager:setTargetSpeedCommand(axisCommandId.longitudinal, 1250)
+            ThrottleTarget.setText("Body")
+        elseif autoStableDistance then
+            Nav.axisCommandManager:setTargetSpeedCommand(axisCommandId.longitudinal, autoStableSpeed*3.6)
+            ThrottleTarget.setText("Atmo")
+        else
+            Nav.axisCommandManager:setTargetSpeedCommand(axisCommandId.longitudinal, construct.getMaxSpeed()*3.6)
+            ThrottleTarget.setText("Space")
+        end
     end
 
     -- Docking: ping mothership and update frame/visuals
@@ -2093,13 +2167,6 @@ system:onEvent('onActionStart', function (self, action)
         autoBrake = not autoBrake
     elseif action == 'option2' and __destPos and not enviro then
         autoAlign = not autoAlign
-    elseif action == 'option3' then
-        autoStableBody = getNearestBodyInfo(vec3(construct.getWorldPosition())).body
-        if autoStableBody then
-            autoStable = not autoStable
-        else
-            autoStable = false
-        end
     end
 end)
 

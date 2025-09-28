@@ -34,8 +34,7 @@ An immersive fighter HUD for first person flying.
 There are two autopilot features, they only work in space and you must have a destination set for them to work.
 * Auto Brake - Alt+1 - crosshair will turn red when activated, will stop your ship so you arrive 10km from either your destination or the atmopshere of your destination's planet.
 * Auto Align - Alt+2 - the destination 3D marker will turn red when activated, your ship will automatically turn to point directly at your destination by overriding pitch and yaw controls.
-A third autopilot feature has been added, this one will keep your pitch level when near celestial objects.
-* Auto Stable - Alt+3 - the ship will take control of pitch and aim to keep the nose pointed perpendicular to the ground.
+A third autopilot feature has been added, this one will help keep your pitch level (when it is within +/- degrees of level) when near celestial objects.
 
 ## Compiling
 * Run du-lua build to output the .conf file for use in control units, in-game.
